@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ระบบบริหารจัดการ สารสนเทศและสื่อสารองค์กร - กำลังเข้าสู่ระบบ...</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="assets/css/style.css">
+    <script>
+        tailwind.config = { darkMode: 'class' };
+        // Check Theme Preference Early
+        if (localStorage.getItem('color-theme') === 'dark' || (!('color-theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.classList.add('dark');
+        } else {
+            document.documentElement.classList.remove('dark');
+        }
+    </script>
+</head>
+<body class="bg-slate-50 dark:bg-slate-900 transition-theme flex items-center justify-center h-screen m-0">
+    
+    <div class="text-center bg-white dark:bg-slate-800 p-10 rounded-2xl shadow-sm dark:shadow-xl border border-slate-200 dark:border-slate-700 transition-theme">
+        <!-- Spinner -->
+        <div class="inline-block animate-spin rounded-full h-12 w-12 border-4 border-slate-200 dark:border-slate-600 border-t-sky-600 dark:border-t-sky-400 mb-6"></div>
+        <h2 class="text-xl font-semibold text-slate-800 dark:text-white tracking-wide">กำลังเตรียมระบบ...</h2>
+        <p class="text-sm text-slate-500 dark:text-slate-400 mt-2">ระบบบริหารจัดการ สารสนเทศและสื่อสารองค์กร</p>
+    </div>
+
+    <script type="module">
+        import { auth } from './assets/js/firebase-config.js';
+        import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                window.location.href = 'dashboard.html';
+            } else {
+                window.location.href = 'login.html';
+            }
+        });
+    </script>
+</body>
+</html>
