@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ระบบจัดการวันลา - ระบบบริหารจัดการ สารสนเทศและสื่อสารองค์กร</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="assets/css/style.css">
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <script>
+        if (localStorage.getItem('color-theme') === 'dark' || (!('color-theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.classList.add('dark');
+        } else {
+            document.documentElement.classList.remove('dark');
+        }
+
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Prompt', 'sans-serif'], },
+                    colors: {
+                        brand: {
+                            50: '#f0f9ff', 100: '#e0f2fe', 500: '#0ea5e9', 600: '#0284c7', 800: '#075985', 900: '#0f172a',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-slate-50 dark:bg-slate-900 transition-theme font-sans text-slate-700 dark:text-slate-300 hidden m-0" id="appBody">
+    
+    <div class="flex h-screen overflow-hidden">
+        
+        <!-- Mobile Overlay -->
+        <div id="mobileOverlay" class="fixed inset-0 bg-slate-900/50 dark:bg-black/60 backdrop-blur-sm z-40 hidden md:hidden transition-opacity duration-300 opacity-0"></div>
+
+        <!-- Sidebar -->
+        <aside id="sidebar" class="fixed inset-y-0 left-0 z-50 w-72 bg-brand-900 text-slate-300 flex flex-col shadow-xl transform -translate-x-full md:relative md:translate-x-0 transition-transform duration-300 ease-in-out border-r border-slate-800 transition-theme">
+            <div class="p-6 flex items-center justify-between border-b border-slate-800 bg-slate-900/50">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 bg-brand-600 dark:bg-sky-600 rounded-lg flex items-center justify-center shadow-sm text-white transition-theme">
+                        <i class="ph ph-buildings text-xl"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-base font-bold text-white whitespace-nowrap tracking-wide">ระบบบริหารจัดการ</h1>
+                        <p class="text-[10px] text-brand-100/70 leading-tight">สารสนเทศและสื่อสารองค์กร</p>
+                    </div>
+                </div>
+                <button id="closeSidebarBtn" class="md:hidden w-8 h-8 rounded-md flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800">
+                    <i class="ph ph-x text-xl"></i>
+                </button>
+            </div>
+
+            <div class="p-6 flex-1 overflow-y-auto">
+                <div class="text-[11px] text-slate-500 uppercase tracking-wider mb-3 font-semibold">เมนูหลัก</div>
+                <nav class="space-y-1.5" id="sidebarNav">
+                    <a href="dashboard.html" class="nav-item flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors">
+                        <i class="ph ph-squares-four text-lg"></i>
+                        <span>ภาพรวม (Dashboard)</span>
+                    </a>
+                    <a href="leave.html" class="nav-item active flex items-center gap-3 px-4 py-3 rounded-lg text-white bg-brand-600 dark:bg-sky-600 font-medium shadow-sm transition-theme">
+                        <i class="ph ph-calendar-blank text-lg"></i>
+                        <span>ระบบจัดการวันลา</span>
+                    </a>
+                    <a href="projects.html" class="nav-item flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors">
+                        <i class="ph ph-chart-line-up text-lg"></i>
+                        <span>โครงการและงบประมาณ</span>
+                    </a>
+                </nav>
+
+                <div id="adminMenu" class="hidden mt-8">
+                    <div class="text-[11px] text-slate-500 uppercase tracking-wider mb-3 font-semibold">ผู้ดูแลระบบ</div>
+                    <nav class="space-y-1.5">
+                        <a href="admin.html" class="nav-item flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors">
+                            <i class="ph ph-users text-lg"></i>
+                            <span>จัดการผู้ใช้งานและสิทธิ์</span>
+                        </a>
+                    </nav>
+                </div>
+            </div>
+
+            <div class="p-6 border-t border-slate-800 bg-slate-900/80">
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center text-slate-300 border border-slate-700">
+                        <i class="ph ph-user text-xl"></i>
+                    </div>
+                    <div class="overflow-hidden">
+                        <div id="userName" class="text-sm font-medium text-white truncate">กำลังโหลด...</div>
+                        <div id="userRole" class="text-[11px] text-brand-400 dark:text-sky-400 truncate">...</div>
+                    </div>
+                </div>
+                <button id="logoutBtn" class="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm text-red-400 hover:text-white hover:bg-red-500 rounded-lg transition-colors border border-red-500/30">
+                    <i class="ph ph-sign-out"></i>
+                    <span>ออกจากระบบ</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 flex flex-col min-w-0 bg-slate-50 dark:bg-slate-900 transition-theme">
+            <!-- Top Header -->
+            <header class="bg-white dark:bg-slate-800 h-20 flex items-center justify-between px-6 lg:px-8 z-30 sticky top-0 border-b border-slate-200 dark:border-slate-700 shadow-sm transition-theme">
+                <div class="flex items-center gap-4">
+                    <button id="mobileMenuBtn" class="md:hidden w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-200 transition-colors">
+                        <i class="ph ph-list text-xl"></i>
+                    </button>
+                    <div>
+                        <h2 class="text-xl md:text-2xl font-bold text-slate-800 dark:text-white transition-theme">ระบบจัดการวันลา</h2>
+                        <p class="text-sm text-slate-500 dark:text-slate-400 hidden sm:block transition-theme">ยื่นใบลา ตรวจสอบสถานะ และอนุมัติการลา</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3">
+                    <button id="themeToggleBtn" class="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 flex items-center justify-center text-slate-600 dark:text-yellow-400 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors theme-toggle-btn">
+                        <i class="ph-fill ph-sun text-xl theme-toggle-icon sun-icon"></i>
+                        <i class="ph-fill ph-moon text-xl theme-toggle-icon moon-icon"></i>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Scrollable Content -->
+            <div class="flex-1 overflow-y-auto p-6 lg:p-8 z-10">
+                
+                <!-- Tabs -->
+                <div class="flex border-b border-slate-200 dark:border-slate-700 mb-6 transition-theme">
+                    <button id="tabMyLeaves" class="px-6 py-3 font-medium text-brand-600 dark:text-sky-400 border-b-2 border-brand-600 dark:border-sky-400 bg-brand-50 dark:bg-slate-800/50 transition-colors">การลาของฉัน</button>
+                    <button id="tabApprovals" class="px-6 py-3 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-800 dark:hover:text-white hidden transition-colors">รายการรออนุมัติ <span id="pendingBadge" class="ml-2 bg-red-500 text-white text-xs px-2 py-0.5 rounded-full hidden">0</span></button>
+                </div>
+
+                <!-- My Leaves View -->
+                <div id="viewMyLeaves" class="block">
+                    <!-- Quota Summary -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                        <div class="clean-card p-6 flex justify-between items-center transition-theme">
+                            <div>
+                                <h4 class="text-sm text-slate-500 dark:text-slate-400 mb-1">โควตาลาพักร้อนคงเหลือ</h4>
+                                <div class="text-3xl font-bold text-slate-800 dark:text-white"><span id="quotaAnnual">--</span> <span class="text-lg font-normal text-slate-500">วัน</span></div>
+                            </div>
+                            <div class="w-12 h-12 rounded-full bg-sky-100 dark:bg-sky-900/50 text-sky-600 dark:text-sky-400 flex items-center justify-center">
+                                <i class="ph ph-airplane-tilt text-2xl"></i>
+                            </div>
+                        </div>
+                        <div class="clean-card p-6 flex justify-between items-center transition-theme">
+                            <div>
+                                <h4 class="text-sm text-slate-500 dark:text-slate-400 mb-1">โควตาลาป่วยคงเหลือ</h4>
+                                <div class="text-3xl font-bold text-slate-800 dark:text-white"><span id="quotaSick">--</span> <span class="text-lg font-normal text-slate-500">วัน</span></div>
+                            </div>
+                            <div class="w-12 h-12 rounded-full bg-rose-100 dark:bg-rose-900/50 text-rose-600 dark:text-rose-400 flex items-center justify-center">
+                                <i class="ph ph-first-aid text-2xl"></i>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="clean-card p-6 transition-theme">
+                        <div class="flex flex-wrap gap-4 justify-between items-center mb-6">
+                            <h3 class="text-lg font-bold text-slate-800 dark:text-white transition-theme">ประวัติการลา</h3>
+                            <button id="requestLeaveBtn" class="flex items-center gap-2 text-sm text-white bg-brand-600 hover:bg-brand-700 dark:bg-sky-600 dark:hover:bg-sky-700 px-4 py-2.5 rounded-lg font-medium transition-colors shadow-sm">
+                                <i class="ph ph-plus-circle text-lg"></i>
+                                ยื่นใบลาใหม่
+                            </button>
+                        </div>
+                        
+                        <div class="table-responsive">
+                            <table class="w-full text-left border-collapse min-w-[600px]">
+                                <thead>
+                                    <tr class="text-sm text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-700/30 transition-theme">
+                                        <th class="py-3 px-4 font-medium rounded-tl-lg">ประเภท</th>
+                                        <th class="py-3 px-4 font-medium">วันที่ลา</th>
+                                        <th class="py-3 px-4 font-medium">จำนวน (วัน)</th>
+                                        <th class="py-3 px-4 font-medium text-center">สถานะ</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="myLeavesTableBody" class="text-sm text-slate-600 dark:text-slate-300 transition-theme">
+                                    <tr><td colspan="4" class="py-6 text-center">กำลังโหลด...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Approvals View -->
+                <div id="viewApprovals" class="hidden">
+                    <div class="clean-card p-6 transition-theme">
+                        <div class="flex items-center mb-6">
+                            <h3 class="text-lg font-bold text-slate-800 dark:text-white transition-theme">รายการลาที่รอการอนุมัติ</h3>
+                        </div>
+                        
+                        <div class="table-responsive">
+                            <table class="w-full text-left border-collapse min-w-[600px]">
+                                <thead>
+                                    <tr class="text-sm text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-700/30 transition-theme">
+                                        <th class="py-3 px-4 font-medium rounded-tl-lg">ผู้ยื่นเรื่อง</th>
+                                        <th class="py-3 px-4 font-medium">ประเภทและวันที่ลา</th>
+                                        <th class="py-3 px-4 font-medium">เหตุผล</th>
+                                        <th class="py-3 px-4 font-medium text-right rounded-tr-lg">จัดการ</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="approvalsTableBody" class="text-sm text-slate-600 dark:text-slate-300 transition-theme">
+                                    <tr><td colspan="4" class="py-6 text-center">กำลังโหลด...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal: Request Leave -->
+    <div id="leaveModal" class="fixed inset-0 bg-slate-900/60 dark:bg-black/80 backdrop-blur-sm z-[60] hidden flex items-center justify-center p-4 opacity-0 transition-opacity duration-300">
+        <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-lg border border-slate-200 dark:border-slate-700 overflow-hidden transform scale-95 transition-transform duration-300" id="leaveModalContent">
+            <div class="px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50">
+                <h3 class="text-lg font-bold text-slate-800 dark:text-white">ยื่นใบลาใหม่</h3>
+                <button id="closeLeaveModalBtn" class="text-slate-400 hover:text-slate-600 dark:hover:text-white transition-colors">
+                    <i class="ph ph-x text-xl"></i>
+                </button>
+            </div>
+            <div class="p-6">
+                <form id="leaveForm" class="space-y-4">
+                    <div id="leaveModalError" class="hidden bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-sm p-3 rounded-lg border border-red-100 dark:border-red-800/50 mb-4"></div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">ประเภทการลา</label>
+                        <select id="leaveType" required class="w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none">
+                            <option value="annual">ลาพักร้อน</option>
+                            <option value="sick">ลาป่วย</option>
+                            <option value="personal">ลากิจ</option>
+                        </select>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">วันที่เริ่มต้น</label>
+                            <input type="date" id="leaveStart" required class="w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">วันที่สิ้นสุด</label>
+                            <input type="date" id="leaveEnd" required class="w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">เหตุผลการลา</label>
+                        <textarea id="leaveReason" rows="3" required class="w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none"></textarea>
+                    </div>
+
+                    <div class="pt-4 flex justify-end gap-3">
+                        <button type="button" id="cancelLeaveModalBtn" class="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white transition-colors">ยกเลิก</button>
+                        <button type="submit" id="saveLeaveBtn" class="px-5 py-2 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 dark:bg-sky-600 dark:hover:bg-sky-700 rounded-lg shadow-sm transition-colors flex items-center">
+                            <span>ส่งใบลา</span>
+                            <div id="saveLeaveSpinner" class="hidden ml-2 inline-block animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="assets/js/leave.js"></script>
+</body>
+</html>
