@@ -1,328 +1,516 @@
 // assets/js/admin.js
-import { app, auth, db } from './firebase-config.js';
-import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-import { collection, getDocs, doc, getDoc, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-// For creating users without signing out the current admin
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getAuth as getSecondaryAuth, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+// หน้า: จัดการผู้ใช้งานและสิทธิ์
 
-// Theme & Sidebar logic (Shared)
-const setupSharedUI = () => {
-    const themeToggleBtn = document.getElementById('themeToggleBtn');
-    if (themeToggleBtn) {
-        themeToggleBtn.addEventListener('click', () => {
-            document.documentElement.classList.toggle('dark');
-            localStorage.setItem('color-theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
-        });
-    }
+import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import {
+  getAuth,
+  onAuthStateChanged,
+  signOut,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail
+} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  orderBy,
+  serverTimestamp
+} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-    const mobileMenuBtn = document.getElementById('mobileMenuBtn');
-    const closeSidebarBtn = document.getElementById('closeSidebarBtn');
-    const sidebar = document.getElementById('sidebar');
-    const mobileOverlay = document.getElementById('mobileOverlay');
+import { auth, db, firebaseConfig } from "./firebase-config.js";
 
-    const toggleMenu = () => {
-        sidebar.classList.toggle('-translate-x-full');
-        mobileOverlay.classList.toggle('hidden');
-        setTimeout(() => mobileOverlay.classList.toggle('opacity-0'), 10);
-    };
+const DEFAULT_PASSWORD = "password";
+const USERS_COLLECTION = "users";
 
-    if(mobileMenuBtn) mobileMenuBtn.addEventListener('click', toggleMenu);
-    if(closeSidebarBtn) closeSidebarBtn.addEventListener('click', toggleMenu);
-    if(mobileOverlay) mobileOverlay.addEventListener('click', toggleMenu);
+const ROLE_LABELS = {
+  staff: "พนักงานทั่วไป",
+  secretary: "เลขาฯ",
+  manager: "หัวหน้างาน",
+  admin: "ผู้ดูแลระบบ"
 };
 
-document.addEventListener('DOMContentLoaded', () => {
-    setupSharedUI();
+const els = {
+  appBody: document.getElementById("appBody"),
+  adminMenu: document.getElementById("adminMenu"),
+  userName: document.getElementById("userName"),
+  userRole: document.getElementById("userRole"),
+  logoutBtn: document.getElementById("logoutBtn"),
+  addUserBtn: document.getElementById("addUserBtn"),
+  refreshBtn: document.getElementById("refreshBtn"),
+  searchInput: document.getElementById("searchInput"),
+  tableBody: document.getElementById("userTableBody"),
+  pageAlert: document.getElementById("pageAlert"),
+  modal: document.getElementById("userModal"),
+  modalContent: document.getElementById("userModalContent"),
+  modalTitle: document.getElementById("modalTitle"),
+  closeModalBtn: document.getElementById("closeModalBtn"),
+  cancelModalBtn: document.getElementById("cancelModalBtn"),
+  form: document.getElementById("userForm"),
+  modalError: document.getElementById("modalError"),
+  userId: document.getElementById("userId"),
+  userEmail: document.getElementById("userEmail"),
+  emailHelpText: document.getElementById("emailHelpText"),
+  userNameInput: document.getElementById("userNameInput"),
+  roleSelect: document.getElementById("userRoleSelect"),
+  annualLeave: document.getElementById("userAnnualLeave"),
+  sickLeave: document.getElementById("userSickLeave"),
+  overrideApproveLeave: document.getElementById("overrideApproveLeave"),
+  overrideApproveProject: document.getElementById("overrideApproveProject"),
+  saveBtn: document.getElementById("saveUserBtn"),
+  saveSpinner: document.getElementById("saveSpinner"),
+  themeToggleBtn: document.getElementById("themeToggleBtn"),
+  mobileMenuBtn: document.getElementById("mobileMenuBtn"),
+  closeSidebarBtn: document.getElementById("closeSidebarBtn"),
+  sidebar: document.getElementById("sidebar"),
+  mobileOverlay: document.getElementById("mobileOverlay")
+};
 
-    const mockUserStr = localStorage.getItem('mockUser');
-    let currentUser = null;
+let currentUser = null;
+let currentProfile = null;
+let usersCache = [];
 
-    if (mockUserStr) {
-        currentUser = JSON.parse(mockUserStr);
-        if(currentUser.role !== 'admin') {
-            window.location.href = 'dashboard.html'; // Redirect if not admin
-        } else {
-            initAdminPanel(currentUser);
-        }
+function showBody() {
+  els.appBody?.classList.remove("hidden");
+}
+
+function showAlert(message, type = "info") {
+  if (!els.pageAlert) return;
+  const styles = {
+    info: "bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-900/30 dark:text-sky-300 dark:border-sky-800",
+    success: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-800",
+    error: "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-800",
+    warning: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800"
+  };
+  els.pageAlert.className = `mb-4 rounded-xl border px-4 py-3 text-sm ${styles[type] || styles.info}`;
+  els.pageAlert.textContent = message;
+  els.pageAlert.classList.remove("hidden");
+  if (type === "success" || type === "info") {
+    setTimeout(() => els.pageAlert?.classList.add("hidden"), 4200);
+  }
+}
+
+function hideAlert() {
+  els.pageAlert?.classList.add("hidden");
+}
+
+function showModalError(message) {
+  els.modalError.textContent = message;
+  els.modalError.classList.remove("hidden");
+}
+
+function hideModalError() {
+  els.modalError.textContent = "";
+  els.modalError.classList.add("hidden");
+}
+
+function setSaving(isSaving) {
+  els.saveBtn.disabled = isSaving;
+  els.saveBtn.classList.toggle("opacity-70", isSaving);
+  els.saveSpinner.classList.toggle("hidden", !isSaving);
+}
+
+function safeText(value, fallback = "-") {
+  const text = String(value ?? "").trim();
+  return text || fallback;
+}
+
+function permissionBadge(value) {
+  const map = {
+    allow: "<span class='inline-flex px-2 py-1 rounded-full text-xs bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'>Allow</span>",
+    deny: "<span class='inline-flex px-2 py-1 rounded-full text-xs bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300'>Deny</span>",
+    inherit: "<span class='inline-flex px-2 py-1 rounded-full text-xs bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'>ตาม Role</span>"
+  };
+  return map[value || "inherit"] || map.inherit;
+}
+
+function roleBadge(role) {
+  const color = {
+    admin: "bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300",
+    manager: "bg-sky-50 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300",
+    secretary: "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
+    staff: "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300"
+  }[role] || "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300";
+  return `<span class="inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${color}">${ROLE_LABELS[role] || role || "-"}</span>`;
+}
+
+function renderLoading() {
+  els.tableBody.innerHTML = `
+    <tr>
+      <td colspan="5" class="py-10 text-center text-slate-400">
+        <div class="inline-block animate-spin rounded-full h-6 w-6 border-2 border-slate-300 dark:border-slate-600 border-t-sky-500 mb-2"></div>
+        <p>กำลังดึงข้อมูล...</p>
+      </td>
+    </tr>`;
+}
+
+function renderEmpty(message = "ยังไม่มีข้อมูลผู้ใช้งาน") {
+  els.tableBody.innerHTML = `
+    <tr>
+      <td colspan="5" class="py-10 text-center text-slate-400">
+        <i class="ph ph-users-three text-3xl block mb-2"></i>
+        ${message}
+      </td>
+    </tr>`;
+}
+
+function renderUsers(users = usersCache) {
+  const keyword = els.searchInput?.value?.trim().toLowerCase() || "";
+  const filtered = users.filter((u) => {
+    if (!keyword) return true;
+    return [u.name, u.email, u.role].some((v) => String(v || "").toLowerCase().includes(keyword));
+  });
+
+  if (!filtered.length) {
+    renderEmpty(keyword ? "ไม่พบข้อมูลที่ค้นหา" : "ยังไม่มีข้อมูลผู้ใช้งาน");
+    return;
+  }
+
+  els.tableBody.innerHTML = filtered.map((u) => {
+    const annual = Number(u.leaveQuota?.annual ?? u.annualLeave ?? 10);
+    const sick = Number(u.leaveQuota?.sick ?? u.sickLeave ?? 30);
+    const approveLeave = u.permissions?.approveLeave ?? "inherit";
+    const approveProject = u.permissions?.approveProject ?? "inherit";
+
+    return `
+      <tr class="border-b border-slate-100 dark:border-slate-700 hover:bg-slate-50/70 dark:hover:bg-slate-700/30 transition-colors">
+        <td class="py-4 px-4">
+          <div class="font-semibold text-slate-800 dark:text-white">${escapeHtml(safeText(u.name, "ไม่ระบุชื่อ"))}</div>
+          <div class="text-xs text-slate-500 mt-0.5">${escapeHtml(safeText(u.email))}</div>
+        </td>
+        <td class="py-4 px-4">${roleBadge(u.role)}</td>
+        <td class="py-4 px-4 text-center">
+          <span class="font-medium">${annual}</span><span class="text-slate-400"> / </span><span class="font-medium">${sick}</span>
+        </td>
+        <td class="py-4 px-4 text-center">
+          <div class="flex flex-col items-center gap-1">
+            <div class="text-[11px] text-slate-400">ลา ${permissionBadge(approveLeave)}</div>
+            <div class="text-[11px] text-slate-400">โครงการ ${permissionBadge(approveProject)}</div>
+          </div>
+        </td>
+        <td class="py-4 px-4 text-right">
+          <div class="inline-flex items-center gap-2">
+            <button class="edit-user-btn px-3 py-1.5 text-xs rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200" data-id="${u.id}">
+              แก้ไข
+            </button>
+            <button class="reset-password-btn px-3 py-1.5 text-xs rounded-lg bg-amber-50 hover:bg-amber-100 dark:bg-amber-900/30 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300" data-id="${u.id}">
+              รีเซ็ตรหัส
+            </button>
+            <button class="delete-user-btn px-3 py-1.5 text-xs rounded-lg bg-red-50 hover:bg-red-100 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-700 dark:text-red-300" data-id="${u.id}">
+              ลบ
+            </button>
+          </div>
+        </td>
+      </tr>`;
+  }).join("");
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+async function loadCurrentProfile(user) {
+  const ref = doc(db, USERS_COLLECTION, user.uid);
+  const snap = await getDoc(ref);
+
+  if (!snap.exists()) {
+    return {
+      id: user.uid,
+      email: user.email,
+      name: user.displayName || user.email,
+      role: "staff"
+    };
+  }
+
+  return { id: snap.id, ...snap.data() };
+}
+
+async function loadUsers() {
+  renderLoading();
+  hideAlert();
+  try {
+    let snap;
+    try {
+      const q = query(collection(db, USERS_COLLECTION), orderBy("name", "asc"));
+      snap = await getDocs(q);
+    } catch (orderError) {
+      // กรณียังไม่มี field name ครบ หรือ index มีปัญหา ให้ fallback เป็น getDocs ปกติ
+      console.warn("orderBy fallback:", orderError);
+      snap = await getDocs(collection(db, USERS_COLLECTION));
+    }
+
+    usersCache = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    usersCache.sort((a, b) => safeText(a.name, a.email).localeCompare(safeText(b.name, b.email), "th"));
+    renderUsers();
+  } catch (error) {
+    console.error("loadUsers error:", error);
+    renderEmpty("ดึงข้อมูลผู้ใช้ไม่สำเร็จ");
+    showAlert(`ดึงข้อมูลผู้ใช้ไม่สำเร็จ: ${error.message || error}`, "error");
+  }
+}
+
+function openModal(mode = "add", user = null) {
+  hideModalError();
+  els.form.reset();
+  els.userId.value = "";
+  els.annualLeave.value = 10;
+  els.sickLeave.value = 30;
+  els.overrideApproveLeave.value = "inherit";
+  els.overrideApproveProject.value = "inherit";
+
+  if (mode === "edit" && user) {
+    els.modalTitle.textContent = "แก้ไขข้อมูลผู้ใช้งาน";
+    els.userId.value = user.id;
+    els.userEmail.value = user.email || "";
+    els.userEmail.disabled = true;
+    els.emailHelpText.textContent = "ไม่สามารถแก้ไขอีเมลจากหน้านี้ได้";
+    els.userNameInput.value = user.name || "";
+    els.roleSelect.value = user.role || "staff";
+    els.annualLeave.value = user.leaveQuota?.annual ?? user.annualLeave ?? 10;
+    els.sickLeave.value = user.leaveQuota?.sick ?? user.sickLeave ?? 30;
+    els.overrideApproveLeave.value = user.permissions?.approveLeave ?? "inherit";
+    els.overrideApproveProject.value = user.permissions?.approveProject ?? "inherit";
+  } else {
+    els.modalTitle.textContent = "เพิ่มผู้ใช้งานใหม่";
+    els.userEmail.disabled = false;
+    els.emailHelpText.textContent = "อีเมลนี้จะใช้สำหรับเข้าสู่ระบบ (รหัสผ่านเริ่มต้นคือ password)";
+  }
+
+  els.modal.classList.remove("hidden");
+  requestAnimationFrame(() => {
+    els.modal.classList.remove("opacity-0");
+    els.modalContent.classList.remove("scale-95");
+  });
+}
+
+function closeModal() {
+  els.modal.classList.add("opacity-0");
+  els.modalContent.classList.add("scale-95");
+  setTimeout(() => els.modal.classList.add("hidden"), 180);
+}
+
+function collectFormData() {
+  return {
+    email: els.userEmail.value.trim().toLowerCase(),
+    name: els.userNameInput.value.trim(),
+    role: els.roleSelect.value,
+    leaveQuota: {
+      annual: Number(els.annualLeave.value || 0),
+      sick: Number(els.sickLeave.value || 0)
+    },
+    permissions: {
+      approveLeave: els.overrideApproveLeave.value,
+      approveProject: els.overrideApproveProject.value
+    }
+  };
+}
+
+function validateUserData(data) {
+  if (!data.email) return "กรุณากรอกอีเมล";
+  if (!data.name) return "กรุณากรอกชื่อ-นามสกุล";
+  if (!data.role) return "กรุณาเลือกบทบาท";
+  if (data.leaveQuota.annual < 0 || data.leaveQuota.sick < 0) return "โควตาวันลาต้องไม่ติดลบ";
+  return "";
+}
+
+async function createAuthUserWithSecondaryApp(email) {
+  // ใช้ secondary app เพื่อไม่ให้ session admin หลุดเมื่อสร้างบัญชีใหม่
+  const secondaryApp = initializeApp(firebaseConfig, `secondary-${Date.now()}`);
+  const secondaryAuth = getAuth(secondaryApp);
+  try {
+    const cred = await createUserWithEmailAndPassword(secondaryAuth, email, DEFAULT_PASSWORD);
+    return cred.user.uid;
+  } finally {
+    await deleteApp(secondaryApp).catch(() => {});
+  }
+}
+
+async function handleSaveUser(event) {
+  event.preventDefault();
+  hideModalError();
+  setSaving(true);
+
+  try {
+    const id = els.userId.value.trim();
+    const data = collectFormData();
+    const validationError = validateUserData(data);
+    if (validationError) throw new Error(validationError);
+
+    if (id) {
+      await updateDoc(doc(db, USERS_COLLECTION, id), {
+        name: data.name,
+        role: data.role,
+        leaveQuota: data.leaveQuota,
+        permissions: data.permissions,
+        updatedAt: serverTimestamp(),
+        updatedBy: currentUser?.uid || null
+      });
+      showAlert("บันทึกการแก้ไขผู้ใช้งานเรียบร้อย", "success");
     } else {
-        onAuthStateChanged(auth, async (user) => {
-            if (user) {
-                try {
-                    const userDocSnap = await getDoc(doc(db, "users", user.uid));
-                    if (userDocSnap.exists()) {
-                        currentUser = userDocSnap.data();
-                        if(currentUser.role !== 'admin') {
-                            window.location.href = 'dashboard.html';
-                        } else {
-                            initAdminPanel(currentUser);
-                        }
-                    } else {
-                        window.location.href = 'login.html';
-                    }
-                } catch(e) {
-                    console.error("Auth Error:", e);
-                    window.location.href = 'login.html';
-                }
-            } else {
-                window.location.href = 'login.html';
-            }
-        });
+      const uid = await createAuthUserWithSecondaryApp(data.email);
+      await setDoc(doc(db, USERS_COLLECTION, uid), {
+        email: data.email,
+        name: data.name,
+        role: data.role,
+        leaveQuota: data.leaveQuota,
+        permissions: data.permissions,
+        status: "active",
+        createdAt: serverTimestamp(),
+        createdBy: currentUser?.uid || null,
+        mustChangePassword: true
+      });
+      showAlert(`เพิ่มผู้ใช้งานเรียบร้อย รหัสผ่านเริ่มต้นคือ ${DEFAULT_PASSWORD}`, "success");
     }
 
-    function initAdminPanel(adminUser) {
-        document.getElementById('appBody').classList.remove('hidden');
-        document.getElementById('userName').textContent = adminUser.name;
-        document.getElementById('userRole').textContent = "ผู้ดูแลระบบ";
-        document.getElementById('adminMenu').classList.remove('hidden');
+    closeModal();
+    await loadUsers();
+  } catch (error) {
+    console.error("save user error:", error);
+    showModalError(error.message || "บันทึกข้อมูลไม่สำเร็จ");
+  } finally {
+    setSaving(false);
+  }
+}
 
-        document.getElementById('logoutBtn').addEventListener('click', () => {
-            if(mockUserStr) {
-                localStorage.removeItem('mockUser');
-                window.location.href = 'login.html';
-            } else {
-                signOut(auth).then(() => window.location.href = 'login.html');
-            }
-        });
+function findUserById(id) {
+  return usersCache.find((u) => u.id === id);
+}
 
-        loadUsersList();
-        setupUserModal();
+async function handleTableClick(event) {
+  const editBtn = event.target.closest(".edit-user-btn");
+  const deleteBtn = event.target.closest(".delete-user-btn");
+  const resetBtn = event.target.closest(".reset-password-btn");
+
+  if (editBtn) {
+    const user = findUserById(editBtn.dataset.id);
+    if (user) openModal("edit", user);
+    return;
+  }
+
+  if (resetBtn) {
+    const user = findUserById(resetBtn.dataset.id);
+    if (!user?.email) return showAlert("ไม่พบอีเมลของผู้ใช้งานนี้", "error");
+    try {
+      await sendPasswordResetEmail(auth, user.email);
+      showAlert(`ส่งลิงก์รีเซ็ตรหัสผ่านไปที่ ${user.email} แล้ว`, "success");
+    } catch (error) {
+      console.error("reset password error:", error);
+      showAlert(`ส่งลิงก์รีเซ็ตรหัสผ่านไม่สำเร็จ: ${error.message || error}`, "error");
+    }
+    return;
+  }
+
+  if (deleteBtn) {
+    const user = findUserById(deleteBtn.dataset.id);
+    if (!user) return;
+    if (user.id === currentUser?.uid) {
+      showAlert("ไม่สามารถลบบัญชีที่กำลังใช้งานอยู่ได้", "warning");
+      return;
+    }
+    const ok = confirm(`ต้องการลบข้อมูลผู้ใช้ "${user.name || user.email}" หรือไม่?\n\nหมายเหตุ: การลบนี้จะลบเฉพาะข้อมูลใน Firestore ไม่ได้ลบบัญชี Authentication`);
+    if (!ok) return;
+    try {
+      await deleteDoc(doc(db, USERS_COLLECTION, user.id));
+      showAlert("ลบข้อมูลผู้ใช้งานเรียบร้อย", "success");
+      await loadUsers();
+    } catch (error) {
+      console.error("delete user error:", error);
+      showAlert(`ลบข้อมูลไม่สำเร็จ: ${error.message || error}`, "error");
+    }
+  }
+}
+
+function setupTheme() {
+  els.themeToggleBtn?.addEventListener("click", () => {
+    const root = document.documentElement;
+    root.classList.toggle("dark");
+    localStorage.setItem("color-theme", root.classList.contains("dark") ? "dark" : "light");
+  });
+}
+
+function setupMobileSidebar() {
+  const open = () => {
+    els.sidebar?.classList.remove("-translate-x-full");
+    els.mobileOverlay?.classList.remove("hidden");
+    requestAnimationFrame(() => els.mobileOverlay?.classList.remove("opacity-0"));
+  };
+  const close = () => {
+    els.sidebar?.classList.add("-translate-x-full");
+    els.mobileOverlay?.classList.add("opacity-0");
+    setTimeout(() => els.mobileOverlay?.classList.add("hidden"), 200);
+  };
+  els.mobileMenuBtn?.addEventListener("click", open);
+  els.closeSidebarBtn?.addEventListener("click", close);
+  els.mobileOverlay?.addEventListener("click", close);
+}
+
+function setupEvents() {
+  els.logoutBtn?.addEventListener("click", async () => {
+    await signOut(auth);
+    window.location.href = "index.html";
+  });
+  els.addUserBtn?.addEventListener("click", () => openModal("add"));
+  els.closeModalBtn?.addEventListener("click", closeModal);
+  els.cancelModalBtn?.addEventListener("click", closeModal);
+  els.modal?.addEventListener("click", (e) => {
+    if (e.target === els.modal) closeModal();
+  });
+  els.form?.addEventListener("submit", handleSaveUser);
+  els.tableBody?.addEventListener("click", handleTableClick);
+  els.refreshBtn?.addEventListener("click", loadUsers);
+  els.searchInput?.addEventListener("input", () => renderUsers());
+  setupTheme();
+  setupMobileSidebar();
+}
+
+function updateCurrentUserUI(profile, user) {
+  els.userName.textContent = profile.name || user.displayName || user.email || "ผู้ใช้งาน";
+  els.userRole.textContent = ROLE_LABELS[profile.role] || profile.role || "ไม่ระบุบทบาท";
+  if (profile.role === "admin") {
+    els.adminMenu?.classList.remove("hidden");
+  }
+}
+
+async function bootstrap() {
+  setupEvents();
+
+  onAuthStateChanged(auth, async (user) => {
+    showBody();
+
+    if (!user) {
+      window.location.href = "index.html";
+      return;
     }
 
-    async function loadUsersList() {
-        const tbody = document.getElementById('userTableBody');
-        
-        if (mockUserStr) {
-            // Mock Data
-            tbody.innerHTML = `
-                <tr class="border-b border-slate-100 dark:border-slate-700/50 hover:bg-slate-50 dark:hover:bg-slate-700/20">
-                    <td class="py-4 px-4">
-                        <div class="font-medium text-slate-800 dark:text-white">Admin Mock</div>
-                        <div class="text-xs text-slate-500">admin@company.com</div>
-                    </td>
-                    <td class="py-4 px-4"><span class="px-2 py-1 rounded text-xs font-medium bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">Admin</span></td>
-                    <td class="py-4 px-4 text-center text-slate-600 dark:text-slate-400">10 / 30</td>
-                    <td class="py-4 px-4 text-right">
-                        <button class="text-brand-600 hover:text-brand-800 dark:text-sky-400 dark:hover:text-sky-300"><i class="ph ph-pencil-simple text-lg"></i></button>
-                    </td>
-                </tr>
-            `;
-            return;
-        }
+    currentUser = user;
 
-        try {
-            const usersSnapshot = await getDocs(collection(db, "users"));
-            tbody.innerHTML = ''; // Clear loading
-            
-            if (usersSnapshot.empty) {
-                tbody.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-slate-500">ไม่พบข้อมูลผู้ใช้งาน</td></tr>`;
-                return;
-            }
+    try {
+      currentProfile = await loadCurrentProfile(user);
+      updateCurrentUserUI(currentProfile, user);
 
-            usersSnapshot.forEach((docSnap) => {
-                const data = docSnap.data();
-                const roleColors = {
-                    'admin': 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
-                    'manager': 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
-                    'secretary': 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
-                    'staff': 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
-                };
-                const roleDisplay = {
-                    'admin': 'Admin', 'manager': 'Manager', 'secretary': 'Secretary', 'staff': 'Staff'
-                };
+      if (currentProfile.role !== "admin") {
+        els.addUserBtn?.classList.add("hidden");
+        renderEmpty("บัญชีนี้ไม่มีสิทธิ์ผู้ดูแลระบบสำหรับเข้าหน้านี้");
+        showAlert("บัญชีนี้ไม่มีสิทธิ์ผู้ดูแลระบบ", "warning");
+        return;
+      }
 
-                const annual = data.leave_quota?.annual || 0;
-                const sick = data.leave_quota?.sick || 0;
-
-                const tr = document.createElement('tr');
-                tr.className = "border-b border-slate-100 dark:border-slate-700/50 hover:bg-slate-50 dark:hover:bg-slate-700/20 transition-colors";
-                tr.innerHTML = `
-                    <td class="py-4 px-4">
-                        <div class="font-medium text-slate-800 dark:text-white">${data.name}</div>
-                        <div class="text-xs text-slate-500 dark:text-slate-400">${data.email}</div>
-                    </td>
-                    <td class="py-4 px-4"><span class="px-2 py-1 rounded text-[10px] font-bold tracking-wider uppercase ${roleColors[data.role] || roleColors['staff']}">${roleDisplay[data.role] || data.role}</span></td>
-                    <td class="py-4 px-4 text-center text-slate-600 dark:text-slate-400 text-sm font-mono">${annual} / ${sick}</td>
-                    <td class="py-4 px-4 text-right">
-                        <button class="edit-btn text-slate-400 hover:text-brand-600 dark:hover:text-sky-400 transition-colors p-2" data-uid="${docSnap.id}">
-                            <i class="ph ph-pencil-simple text-lg"></i>
-                        </button>
-                    </td>
-                `;
-                tbody.appendChild(tr);
-            });
-
-            // Bind Edit events
-            document.querySelectorAll('.edit-btn').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    const uid = e.currentTarget.getAttribute('data-uid');
-                    openEditModal(uid);
-                });
-            });
-
-        } catch (error) {
-            console.error("Error loading users:", error);
-            tbody.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-red-500">เกิดข้อผิดพลาดในการโหลดข้อมูล</td></tr>`;
-        }
+      await loadUsers();
+    } catch (error) {
+      console.error("bootstrap error:", error);
+      renderEmpty("โหลดข้อมูลเริ่มต้นไม่สำเร็จ");
+      showAlert(`โหลดข้อมูลเริ่มต้นไม่สำเร็จ: ${error.message || error}`, "error");
     }
+  });
+}
 
-    // Modal Logic
-    const userModal = document.getElementById('userModal');
-    const userModalContent = document.getElementById('userModalContent');
-    const userForm = document.getElementById('userForm');
-    let isEditMode = false;
-
-    function toggleModal(show) {
-        if (show) {
-            userModal.classList.remove('hidden');
-            setTimeout(() => {
-                userModal.classList.remove('opacity-0');
-                userModalContent.classList.remove('scale-95');
-            }, 10);
-        } else {
-            userModal.classList.add('opacity-0');
-            userModalContent.classList.add('scale-95');
-            setTimeout(() => userModal.classList.add('hidden'), 300);
-            userForm.reset();
-            document.getElementById('modalError').classList.add('hidden');
-            document.getElementById('userEmail').disabled = false; // Enable email for new users
-        }
-    }
-
-    document.getElementById('addUserBtn').addEventListener('click', () => {
-        isEditMode = false;
-        document.getElementById('modalTitle').textContent = "เพิ่มผู้ใช้งานใหม่";
-        document.getElementById('emailHelpText').classList.remove('hidden');
-        document.getElementById('userId').value = "";
-        
-        // Reset Overrides
-        document.getElementById('overrideApproveLeave').value = "inherit";
-        document.getElementById('overrideApproveProject').value = "inherit";
-
-        toggleModal(true);
-    });
-
-    document.getElementById('closeModalBtn').addEventListener('click', () => toggleModal(false));
-    document.getElementById('cancelModalBtn').addEventListener('click', () => toggleModal(false));
-
-    async function openEditModal(uid) {
-        isEditMode = true;
-        document.getElementById('modalTitle').textContent = "แก้ไขผู้ใช้งาน";
-        document.getElementById('emailHelpText').classList.add('hidden');
-        document.getElementById('userEmail').disabled = true; // Cannot change email easily
-        document.getElementById('userId').value = uid;
-
-        try {
-            const userDoc = await getDoc(doc(db, "users", uid));
-            if(userDoc.exists()) {
-                const data = userDoc.data();
-                document.getElementById('userEmail').value = data.email;
-                document.getElementById('userNameInput').value = data.name;
-                document.getElementById('userRoleSelect').value = data.role;
-                document.getElementById('userAnnualLeave').value = data.leave_quota?.annual || 10;
-                document.getElementById('userSickLeave').value = data.leave_quota?.sick || 30;
-
-                // Load overrides if they exist
-                const overrideDoc = await getDoc(doc(db, "user_overrides", uid));
-                if(overrideDoc.exists()) {
-                    const overrides = overrideDoc.data().overrides || {};
-                    document.getElementById('overrideApproveLeave').value = overrides.approve_leave || "inherit";
-                    document.getElementById('overrideApproveProject').value = overrides.approve_project || "inherit";
-                } else {
-                    document.getElementById('overrideApproveLeave').value = "inherit";
-                    document.getElementById('overrideApproveProject').value = "inherit";
-                }
-
-                toggleModal(true);
-            }
-        } catch(e) {
-            console.error("Error fetching user details", e);
-            alert("ไม่สามารถดึงข้อมูลได้");
-        }
-    }
-
-    userForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        
-        const errorMsg = document.getElementById('modalError');
-        const saveBtn = document.getElementById('saveUserBtn');
-        const spinner = document.getElementById('saveSpinner');
-        
-        errorMsg.classList.add('hidden');
-        saveBtn.disabled = true;
-        spinner.classList.remove('hidden');
-
-        const email = document.getElementById('userEmail').value;
-        const name = document.getElementById('userNameInput').value;
-        const role = document.getElementById('userRoleSelect').value;
-        const annualLeave = parseInt(document.getElementById('userAnnualLeave').value);
-        const sickLeave = parseInt(document.getElementById('userSickLeave').value);
-        const uid = document.getElementById('userId').value;
-
-        const overrideApproveLeave = document.getElementById('overrideApproveLeave').value;
-        const overrideApproveProject = document.getElementById('overrideApproveProject').value;
-
-        if (mockUserStr) {
-            alert("Mock Mode: จำลองการบันทึกสำเร็จ");
-            toggleModal(false);
-            saveBtn.disabled = false;
-            spinner.classList.add('hidden');
-            return;
-        }
-
-        try {
-            let targetUid = uid;
-
-            if (!isEditMode) {
-                // CREATE NEW USER via Secondary App (prevents signing out Admin)
-                // Need to import options from original app config
-                const secondaryApp = initializeApp(app.options, "Secondary");
-                const secondaryAuth = getSecondaryAuth(secondaryApp);
-                
-                // Password defaults to "password"
-                const userCredential = await createUserWithEmailAndPassword(secondaryAuth, email, "password");
-                targetUid = userCredential.user.uid;
-                
-                // Sign out secondary auth to clean up
-                await signOut(secondaryAuth);
-            }
-
-            // Update/Create Firestore User Document
-            const userRef = doc(db, "users", targetUid);
-            await setDoc(userRef, {
-                email: email,
-                name: name,
-                role: role,
-                leave_quota: {
-                    annual: annualLeave,
-                    sick: sickLeave
-                },
-                updatedAt: new Date()
-            }, { merge: true }); // Merge true keeps createdAt if exists
-
-            // Save Overrides
-            let overridesToSave = {};
-            if(overrideApproveLeave !== 'inherit') overridesToSave.approve_leave = overrideApproveLeave;
-            if(overrideApproveProject !== 'inherit') overridesToSave.approve_project = overrideApproveProject;
-
-            const overrideRef = doc(db, "user_overrides", targetUid);
-            if (Object.keys(overridesToSave).length > 0) {
-                await setDoc(overrideRef, { overrides: overridesToSave });
-            } else {
-                // If everything is inherit, we can just clear the overrides map
-                await setDoc(overrideRef, { overrides: {} });
-            }
-
-            toggleModal(false);
-            loadUsersList(); // Reload table
-
-        } catch (error) {
-            console.error("Save User Error:", error);
-            errorMsg.textContent = error.message;
-            errorMsg.classList.remove('hidden');
-        } finally {
-            saveBtn.disabled = false;
-            spinner.classList.add('hidden');
-        }
-    });
-});
+bootstrap();
