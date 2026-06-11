@@ -1,5 +1,6 @@
 // assets/js/admin.js
 // หน้า: จัดการผู้ใช้งานและสิทธิ์
+// เวอร์ชันแก้ไข: ไม่เด้งกลับหน้า login อัตโนมัติเมื่อ Auth ยังคืนค่าไม่ทัน/สถานะหลุดชั่วคราว
 
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
 import {
@@ -7,7 +8,9 @@ import {
   onAuthStateChanged,
   signOut,
   createUserWithEmailAndPassword,
-  sendPasswordResetEmail
+  sendPasswordResetEmail,
+  setPersistence,
+  browserLocalPersistence
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 import {
   collection,
@@ -73,6 +76,7 @@ const els = {
 let currentUser = null;
 let currentProfile = null;
 let usersCache = [];
+let authFirstCheckDone = false;
 
 function showBody() {
   els.appBody?.classList.remove("hidden");
@@ -119,6 +123,15 @@ function safeText(value, fallback = "-") {
   return text || fallback;
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 function permissionBadge(value) {
   const map = {
     allow: "<span class='inline-flex px-2 py-1 rounded-full text-xs bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'>Allow</span>",
@@ -138,12 +151,12 @@ function roleBadge(role) {
   return `<span class="inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${color}">${ROLE_LABELS[role] || role || "-"}</span>`;
 }
 
-function renderLoading() {
+function renderLoading(message = "กำลังดึงข้อมูล...") {
   els.tableBody.innerHTML = `
     <tr>
       <td colspan="5" class="py-10 text-center text-slate-400">
         <div class="inline-block animate-spin rounded-full h-6 w-6 border-2 border-slate-300 dark:border-slate-600 border-t-sky-500 mb-2"></div>
-        <p>กำลังดึงข้อมูล...</p>
+        <p>${message}</p>
       </td>
     </tr>`;
 }
@@ -158,7 +171,35 @@ function renderEmpty(message = "ยังไม่มีข้อมูลผู
     </tr>`;
 }
 
+function renderLoginRequired() {
+  els.userName.textContent = "ยังไม่ได้เข้าสู่ระบบ";
+  els.userRole.textContent = "กรุณาเข้าสู่ระบบ";
+  els.addUserBtn?.classList.add("hidden");
+  els.refreshBtn?.classList.add("hidden");
+  els.searchInput?.classList.add("hidden");
+
+  els.tableBody.innerHTML = `
+    <tr>
+      <td colspan="5" class="py-12 px-4 text-center">
+        <div class="max-w-md mx-auto rounded-2xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/30 p-6">
+          <i class="ph ph-warning-circle text-4xl text-amber-600 dark:text-amber-300 block mb-3"></i>
+          <div class="text-base font-bold text-amber-800 dark:text-amber-200 mb-2">ยังไม่พบสถานะการเข้าสู่ระบบ</div>
+          <div class="text-sm text-amber-700 dark:text-amber-300 mb-4">
+            ระบบจะไม่เด้งกลับหน้า Login อัตโนมัติแล้ว เพื่อป้องกันอาการกด Back แล้วกลับมาหน้า Admin
+          </div>
+          <a href="index.html" class="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium">
+            <i class="ph ph-sign-in"></i> ไปหน้าเข้าสู่ระบบ
+          </a>
+        </div>
+      </td>
+    </tr>`;
+}
+
 function renderUsers(users = usersCache) {
+  els.addUserBtn?.classList.remove("hidden");
+  els.refreshBtn?.classList.remove("hidden");
+  els.searchInput?.classList.remove("hidden");
+
   const keyword = els.searchInput?.value?.trim().toLowerCase() || "";
   const filtered = users.filter((u) => {
     if (!keyword) return true;
@@ -194,43 +235,21 @@ function renderUsers(users = usersCache) {
         </td>
         <td class="py-4 px-4 text-right">
           <div class="inline-flex items-center gap-2">
-            <button class="edit-user-btn px-3 py-1.5 text-xs rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200" data-id="${u.id}">
-              แก้ไข
-            </button>
-            <button class="reset-password-btn px-3 py-1.5 text-xs rounded-lg bg-amber-50 hover:bg-amber-100 dark:bg-amber-900/30 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300" data-id="${u.id}">
-              รีเซ็ตรหัส
-            </button>
-            <button class="delete-user-btn px-3 py-1.5 text-xs rounded-lg bg-red-50 hover:bg-red-100 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-700 dark:text-red-300" data-id="${u.id}">
-              ลบ
-            </button>
+            <button class="edit-user-btn px-3 py-1.5 text-xs rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200" data-id="${u.id}">แก้ไข</button>
+            <button class="reset-password-btn px-3 py-1.5 text-xs rounded-lg bg-amber-50 hover:bg-amber-100 dark:bg-amber-900/30 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300" data-id="${u.id}">รีเซ็ตรหัส</button>
+            <button class="delete-user-btn px-3 py-1.5 text-xs rounded-lg bg-red-50 hover:bg-red-100 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-700 dark:text-red-300" data-id="${u.id}">ลบ</button>
           </div>
         </td>
       </tr>`;
   }).join("");
 }
 
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
 async function loadCurrentProfile(user) {
   const ref = doc(db, USERS_COLLECTION, user.uid);
   const snap = await getDoc(ref);
-
   if (!snap.exists()) {
-    return {
-      id: user.uid,
-      email: user.email,
-      name: user.displayName || user.email,
-      role: "staff"
-    };
+    return { id: user.uid, email: user.email, name: user.displayName || user.email, role: "staff" };
   }
-
   return { id: snap.id, ...snap.data() };
 }
 
@@ -243,11 +262,9 @@ async function loadUsers() {
       const q = query(collection(db, USERS_COLLECTION), orderBy("name", "asc"));
       snap = await getDocs(q);
     } catch (orderError) {
-      // กรณียังไม่มี field name ครบ หรือ index มีปัญหา ให้ fallback เป็น getDocs ปกติ
       console.warn("orderBy fallback:", orderError);
       snap = await getDocs(collection(db, USERS_COLLECTION));
     }
-
     usersCache = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     usersCache.sort((a, b) => safeText(a.name, a.email).localeCompare(safeText(b.name, b.email), "th"));
     renderUsers();
@@ -323,10 +340,10 @@ function validateUserData(data) {
 }
 
 async function createAuthUserWithSecondaryApp(email) {
-  // ใช้ secondary app เพื่อไม่ให้ session admin หลุดเมื่อสร้างบัญชีใหม่
   const secondaryApp = initializeApp(firebaseConfig, `secondary-${Date.now()}`);
   const secondaryAuth = getAuth(secondaryApp);
   try {
+    await setPersistence(secondaryAuth, browserLocalPersistence);
     const cred = await createUserWithEmailAndPassword(secondaryAuth, email, DEFAULT_PASSWORD);
     return cred.user.uid;
   } finally {
@@ -338,7 +355,6 @@ async function handleSaveUser(event) {
   event.preventDefault();
   hideModalError();
   setSaving(true);
-
   try {
     const id = els.userId.value.trim();
     const data = collectFormData();
@@ -370,7 +386,6 @@ async function handleSaveUser(event) {
       });
       showAlert(`เพิ่มผู้ใช้งานเรียบร้อย รหัสผ่านเริ่มต้นคือ ${DEFAULT_PASSWORD}`, "success");
     }
-
     closeModal();
     await loadUsers();
   } catch (error) {
@@ -461,9 +476,7 @@ function setupEvents() {
   els.addUserBtn?.addEventListener("click", () => openModal("add"));
   els.closeModalBtn?.addEventListener("click", closeModal);
   els.cancelModalBtn?.addEventListener("click", closeModal);
-  els.modal?.addEventListener("click", (e) => {
-    if (e.target === els.modal) closeModal();
-  });
+  els.modal?.addEventListener("click", (e) => { if (e.target === els.modal) closeModal(); });
   els.form?.addEventListener("submit", handleSaveUser);
   els.tableBody?.addEventListener("click", handleTableClick);
   els.refreshBtn?.addEventListener("click", loadUsers);
@@ -475,42 +488,66 @@ function setupEvents() {
 function updateCurrentUserUI(profile, user) {
   els.userName.textContent = profile.name || user.displayName || user.email || "ผู้ใช้งาน";
   els.userRole.textContent = ROLE_LABELS[profile.role] || profile.role || "ไม่ระบุบทบาท";
-  if (profile.role === "admin") {
-    els.adminMenu?.classList.remove("hidden");
+  if (profile.role === "admin") els.adminMenu?.classList.remove("hidden");
+}
+
+async function handleSignedInUser(user) {
+  currentUser = user;
+  currentProfile = await loadCurrentProfile(user);
+  updateCurrentUserUI(currentProfile, user);
+
+  if (currentProfile.role !== "admin") {
+    els.addUserBtn?.classList.add("hidden");
+    renderEmpty("บัญชีนี้ไม่มีสิทธิ์ผู้ดูแลระบบสำหรับเข้าหน้านี้");
+    showAlert("บัญชีนี้ไม่มีสิทธิ์ผู้ดูแลระบบ", "warning");
+    return;
   }
+
+  await loadUsers();
 }
 
 async function bootstrap() {
   setupEvents();
+  showBody();
+  renderLoading("กำลังตรวจสอบสถานะเข้าสู่ระบบ...");
+
+  try {
+    // ตั้งค่าให้ Auth จำสถานะไว้ใน browser local storage
+    // จุดนี้ช่วยลดอาการเปลี่ยนหน้าแล้วหลุดกลับ login
+    await setPersistence(auth, browserLocalPersistence);
+  } catch (error) {
+    console.warn("setPersistence warning:", error);
+  }
 
   onAuthStateChanged(auth, async (user) => {
     showBody();
-
-    if (!user) {
-      window.location.href = "index.html";
-      return;
-    }
-
-    currentUser = user;
+    authFirstCheckDone = true;
 
     try {
-      currentProfile = await loadCurrentProfile(user);
-      updateCurrentUserUI(currentProfile, user);
-
-      if (currentProfile.role !== "admin") {
-        els.addUserBtn?.classList.add("hidden");
-        renderEmpty("บัญชีนี้ไม่มีสิทธิ์ผู้ดูแลระบบสำหรับเข้าหน้านี้");
-        showAlert("บัญชีนี้ไม่มีสิทธิ์ผู้ดูแลระบบ", "warning");
+      if (!user) {
+        // เวอร์ชันเดิมใช้ window.location.href = "index.html" ทันที
+        // ทำให้เกิดอาการกดเมนู Admin แล้วเด้งไป Login แล้วต้องกด Back
+        // เวอร์ชันนี้จะไม่ redirect อัตโนมัติ แต่แสดงปุ่มไป Login แทน
+        renderLoginRequired();
+        showAlert("ยังไม่พบ session การเข้าสู่ระบบ หากเพิ่ง Login ให้ตรวจหน้า login ว่าตั้งค่า browserLocalPersistence แล้ว", "warning");
         return;
       }
 
-      await loadUsers();
+      await handleSignedInUser(user);
     } catch (error) {
-      console.error("bootstrap error:", error);
+      console.error("bootstrap auth state error:", error);
       renderEmpty("โหลดข้อมูลเริ่มต้นไม่สำเร็จ");
       showAlert(`โหลดข้อมูลเริ่มต้นไม่สำเร็จ: ${error.message || error}`, "error");
     }
   });
+
+  // กันกรณี onAuthStateChanged ไม่ callback จากปัญหา network/CDN
+  setTimeout(() => {
+    if (!authFirstCheckDone) {
+      renderLoginRequired();
+      showAlert("ตรวจสอบสถานะ Login ไม่สำเร็จ กรุณาเช็ก Console หรือ CDN Firebase", "error");
+    }
+  }, 5000);
 }
 
 bootstrap();
