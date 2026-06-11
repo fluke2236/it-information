@@ -8,12 +8,12 @@ import { getFirestore } from "https://www.gstatic.com/firebasejs/10.8.0/firebase
 // TODO: แทนที่ค่าเหล่านี้ด้วย Firebase Config ของคุณเอง
 // คุณสามารถหาได้จาก Firebase Console -> Project Settings -> General -> Your apps
 const firebaseConfig = {
-  apiKey: "AIzaSyYOUR-API-KEY-HERE",
-  authDomain: "your-project-id.firebaseapp.com",
-  projectId: "your-project-id",
-  storageBucket: "your-project-id.appspot.com",
-  messagingSenderId: "123456789012",
-  appId: "1:123456789012:web:abcdef1234567890"
+  apiKey: "AIzaSyCcOi0Ae3AHzxlhebHoDwxA_twdWA-1-z0",
+  authDomain: "it-informatio.firebaseapp.com",
+  projectId: "it-informatio",
+  storageBucket: "it-informatio.firebasestorage.app",
+  messagingSenderId: "18547295463",
+  appId: "1:18547295463:web:e59e0655f184d33fbc4e42"
 };
 
 // Initialize Firebase
