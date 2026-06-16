@@ -1,7 +1,7 @@
-// assets/js/project-budget-editor-hotfix.js
-// Standalone hotfix: ปุ่มแก้ไขงบประมาณรวมฝ่าย สำหรับ admin / manager / หัวหน้าฝ่าย
-// ใช้ร่วมกับ projects.js เดิมได้ ไม่ต้องแก้ logic หลัก
-// Version: budget-editor-hotfix-v4
+// assets/js/budget-editor-force.js
+// Force Budget Editor for Projects page
+// แสดงปุ่ม "แก้งบรวม" ให้ Admin / Manager / หัวหน้าฝ่าย / ผู้ที่มี override approve_project=allow
+// Version: budget-editor-force-v5
 
 import { auth, db } from './firebase-config.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
@@ -13,7 +13,7 @@ import {
     serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-console.log('project-budget-editor-hotfix.js loaded: budget-editor-hotfix-v4');
+console.log('budget-editor-force.js loaded: budget-editor-force-v5');
 
 const DEFAULT_TOTAL_BUDGET = 1500000;
 const SETTINGS_REF = doc(db, 'settings', 'budget');
@@ -21,143 +21,154 @@ const SETTINGS_REF = doc(db, 'settings', 'budget');
 let currentUser = null;
 let currentUserUid = null;
 let totalBudgetLimit = DEFAULT_TOTAL_BUDGET;
-let unsubscribeBudget = null;
+let canEdit = false;
 
-const APPROVER_ROLES = new Set([
+const ALLOWED_ROLES = new Set([
     'admin',
-    'administrator',
     'manager',
+    'administrator',
     'head',
     'department_head',
     'head_department',
     'section_head',
     'supervisor',
     'director',
+    'ผู้ดูแลระบบ',
     'หัวหน้าฝ่าย',
-    'หัวหน้างาน',
-    'ผู้ดูแลระบบ'
+    'หัวหน้างาน'
 ]);
 
-document.addEventListener('DOMContentLoaded', initBudgetEditorHotfix);
+// รันหลายจังหวะ เผื่อ DOM หรือ header โหลดช้า
+window.addEventListener('load', bootBudgetEditor);
+document.addEventListener('DOMContentLoaded', bootBudgetEditor);
+setTimeout(bootBudgetEditor, 800);
+setTimeout(bootBudgetEditor, 1800);
 
-function initBudgetEditorHotfix() {
+function bootBudgetEditor() {
     onAuthStateChanged(auth, async (user) => {
         if (!user) return;
-
         currentUserUid = user.uid;
 
-        try {
-            const userSnap = await getDoc(doc(db, 'users', user.uid));
-            currentUser = userSnap.exists()
-                ? { uid: user.uid, email: user.email, ...userSnap.data() }
-                : { uid: user.uid, email: user.email, role: '' };
-        } catch (error) {
-            console.error('Budget editor user role error:', error);
-            currentUser = { uid: user.uid, email: user.email, role: '' };
-        }
+        currentUser = await loadUser(user);
+        canEdit = await canEditBudget(user.uid, currentUser);
 
-        listenBudgetSetting();
+        listenBudget();
 
-        if (canEditBudget(currentUser)) {
-            injectGlobalBudgetButton();
-            ensureGlobalBudgetModal();
+        if (canEdit) {
+            forceAddBudgetButton();
+            ensureBudgetModal();
         } else {
-            console.warn('Budget editor hidden because user role is:', currentUser?.role);
+            console.warn('[budget-editor-force] hidden. role =', currentUser?.role, 'override approve_project not allow');
         }
     });
 }
 
-function canEditBudget(user) {
-    const role = String(user?.role || '').trim();
-    return APPROVER_ROLES.has(role);
+async function loadUser(user) {
+    try {
+        const snap = await getDoc(doc(db, 'users', user.uid));
+        return snap.exists() ? { uid: user.uid, email: user.email, ...snap.data() } : { uid: user.uid, email: user.email, role: '' };
+    } catch (error) {
+        console.error('[budget-editor-force] load user error:', error);
+        return { uid: user.uid, email: user.email, role: '' };
+    }
 }
 
-function listenBudgetSetting() {
-    if (typeof unsubscribeBudget === 'function') unsubscribeBudget();
+async function canEditBudget(uid, userData) {
+    const role = String(userData?.role || '').trim();
+    if (ALLOWED_ROLES.has(role)) return true;
 
-    unsubscribeBudget = onSnapshot(SETTINGS_REF, (snap) => {
-        if (snap.exists()) {
-            totalBudgetLimit = Number(snap.data().totalBudget || DEFAULT_TOTAL_BUDGET);
-        } else {
-            totalBudgetLimit = DEFAULT_TOTAL_BUDGET;
-        }
-        updateBudgetOverviewText();
-    }, (error) => {
-        console.error('Budget setting listener error:', error);
-        updateBudgetOverviewText();
-    });
-}
-
-function injectGlobalBudgetButton() {
-    if (document.getElementById('editGlobalBudgetBtn')) {
-        document.getElementById('editGlobalBudgetBtn').classList.remove('hidden');
-        return;
+    // รองรับระบบ override จาก admin.js เดิม: user_overrides/{uid}.overrides.approve_project = allow
+    try {
+        const overrideSnap = await getDoc(doc(db, 'user_overrides', uid));
+        const override = overrideSnap.exists() ? overrideSnap.data()?.overrides?.approve_project : null;
+        if (override === 'allow') return true;
+        if (override === 'deny') return false;
+    } catch (error) {
+        console.warn('[budget-editor-force] override check failed:', error);
     }
 
-    const titleEl = findBudgetTitleElement();
+    // fallback จากข้อความ role ที่แสดงบน sidebar เช่น ผู้ดูแลระบบ / หัวหน้างาน
+    const visibleRole = String(document.getElementById('userRole')?.textContent || '').trim();
+    if (ALLOWED_ROLES.has(visibleRole)) return true;
+
+    return false;
+}
+
+function listenBudget() {
+    onSnapshot(SETTINGS_REF, (snap) => {
+        totalBudgetLimit = snap.exists() ? Number(snap.data().totalBudget || DEFAULT_TOTAL_BUDGET) : DEFAULT_TOTAL_BUDGET;
+        updateBudgetText();
+    }, (error) => {
+        console.error('[budget-editor-force] settings listener error:', error);
+        updateBudgetText();
+    });
+}
+
+function forceAddBudgetButton() {
+    if (document.getElementById('forceEditBudgetBtn')) return;
+
+    const titleEl = findBudgetTitle();
     if (!titleEl) {
-        console.warn('Budget title element not found. Cannot inject edit button.');
+        console.warn('[budget-editor-force] budget title not found');
         return;
     }
 
     titleEl.id = 'globalBudgetTitle';
 
-    const row = document.createElement('div');
-    row.className = 'relative z-10 flex justify-between items-start gap-4 flex-wrap mb-6';
+    let row = titleEl.closest('#budgetTitleRow');
+    if (!row) {
+        row = document.createElement('div');
+        row.id = 'budgetTitleRow';
+        row.className = 'relative z-10 flex justify-between items-start gap-4 flex-wrap mb-6';
+        const parent = titleEl.parentElement;
+        parent.insertBefore(row, titleEl);
+        row.appendChild(titleEl);
+        titleEl.classList.remove('mb-6');
+    }
 
-    const parent = titleEl.parentElement;
-    parent.insertBefore(row, titleEl);
-    row.appendChild(titleEl);
-
-    // ลบ margin เดิมถ้ามี เพื่อไม่ให้ช่องว่างเพี้ยน
-    titleEl.classList.remove('mb-6');
-
-    const button = document.createElement('button');
-    button.id = 'editGlobalBudgetBtn';
-    button.type = 'button';
-    button.className = 'inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold border border-white/15 transition-colors';
-    button.innerHTML = '<i class="ph ph-pencil-simple"></i><span>แก้งบรวม</span>';
-    button.addEventListener('click', openGlobalBudgetModal);
-
-    row.appendChild(button);
+    const btn = document.createElement('button');
+    btn.id = 'forceEditBudgetBtn';
+    btn.type = 'button';
+    btn.className = 'inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold shadow-sm transition-colors';
+    btn.innerHTML = '<i class="ph ph-pencil-simple"></i><span>แก้งบรวม</span>';
+    btn.addEventListener('click', openBudgetModal);
+    row.appendChild(btn);
 }
 
-function findBudgetTitleElement() {
+function findBudgetTitle() {
     const byId = document.getElementById('globalBudgetTitle');
     if (byId) return byId;
 
-    const headings = Array.from(document.querySelectorAll('h1,h2,h3,h4,p,div'));
-    return headings.find((el) => String(el.textContent || '').includes('ภาพรวมงบประมาณฝ่าย')) || null;
+    return Array.from(document.querySelectorAll('h1,h2,h3,h4,p,div'))
+        .find(el => String(el.textContent || '').includes('ภาพรวมงบประมาณฝ่าย')) || null;
 }
 
-function ensureGlobalBudgetModal() {
-    if (document.getElementById('globalBudgetModal')) return;
+function ensureBudgetModal() {
+    if (document.getElementById('forceBudgetModal')) return;
 
     const modal = document.createElement('div');
-    modal.id = 'globalBudgetModal';
-    modal.className = 'fixed inset-0 bg-slate-900/60 dark:bg-black/80 backdrop-blur-sm z-[80] hidden flex items-center justify-center p-4 opacity-0 transition-opacity duration-300';
+    modal.id = 'forceBudgetModal';
+    modal.className = 'fixed inset-0 bg-slate-900/60 dark:bg-black/80 backdrop-blur-sm z-[90] hidden flex items-center justify-center p-4 opacity-0 transition-opacity duration-300';
     modal.innerHTML = `
-        <div id="globalBudgetModalContent" class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-md border border-slate-200 dark:border-slate-700 overflow-hidden transform scale-95 transition-transform duration-300">
+        <div id="forceBudgetModalContent" class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-md border border-slate-200 dark:border-slate-700 overflow-hidden transform scale-95 transition-transform duration-300">
             <div class="px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50">
                 <h3 class="text-lg font-bold text-slate-800 dark:text-white">แก้ไขงบประมาณรวมฝ่าย</h3>
-                <button id="closeGlobalBudgetModalBtn" class="text-slate-400 hover:text-slate-600 dark:hover:text-white transition-colors">
+                <button id="forceCloseBudgetBtn" class="text-slate-400 hover:text-slate-600 dark:hover:text-white transition-colors">
                     <i class="ph ph-x text-xl"></i>
                 </button>
             </div>
             <div class="p-6 space-y-4">
-                <div id="globalBudgetError" class="hidden bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-sm p-3 rounded-lg border border-red-100 dark:border-red-800/50"></div>
+                <div id="forceBudgetError" class="hidden bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-sm p-3 rounded-lg border border-red-100 dark:border-red-800/50"></div>
                 <div>
                     <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">งบประมาณรวมฝ่ายปีปัจจุบัน (บาท)</label>
-                    <input type="number" id="globalBudgetInput" min="0" step="1000" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none">
+                    <input type="number" id="forceBudgetInput" min="0" step="1000" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none">
                 </div>
-                <p class="text-xs text-slate-500 dark:text-slate-400">
-                    บันทึกที่ Firestore: <code>settings/budget.totalBudget</code>
-                </p>
+                <p class="text-xs text-slate-500 dark:text-slate-400">บันทึกที่ Firestore: <code>settings/budget.totalBudget</code></p>
                 <div class="pt-2 flex justify-end gap-3">
-                    <button type="button" id="cancelGlobalBudgetBtn" class="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white transition-colors">ยกเลิก</button>
-                    <button type="button" id="saveGlobalBudgetBtn" class="px-5 py-2 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 dark:bg-sky-600 dark:hover:bg-sky-700 rounded-lg shadow-sm transition-colors flex items-center gap-2">
+                    <button type="button" id="forceCancelBudgetBtn" class="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white transition-colors">ยกเลิก</button>
+                    <button type="button" id="forceSaveBudgetBtn" class="px-5 py-2 text-sm font-medium text-white bg-sky-600 hover:bg-sky-700 rounded-lg shadow-sm transition-colors flex items-center gap-2">
                         <span>บันทึกงบรวม</span>
-                        <span id="saveGlobalBudgetSpinner" class="hidden inline-block animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
+                        <span id="forceSaveBudgetSpinner" class="hidden inline-block animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
                     </button>
                 </div>
             </div>
@@ -165,19 +176,17 @@ function ensureGlobalBudgetModal() {
     `;
 
     document.body.appendChild(modal);
-
-    document.getElementById('closeGlobalBudgetModalBtn')?.addEventListener('click', closeGlobalBudgetModal);
-    document.getElementById('cancelGlobalBudgetBtn')?.addEventListener('click', closeGlobalBudgetModal);
-    document.getElementById('saveGlobalBudgetBtn')?.addEventListener('click', saveGlobalBudget);
+    document.getElementById('forceCloseBudgetBtn')?.addEventListener('click', closeBudgetModal);
+    document.getElementById('forceCancelBudgetBtn')?.addEventListener('click', closeBudgetModal);
+    document.getElementById('forceSaveBudgetBtn')?.addEventListener('click', saveBudget);
 }
 
-function openGlobalBudgetModal() {
-    ensureGlobalBudgetModal();
-
-    const modal = document.getElementById('globalBudgetModal');
-    const content = document.getElementById('globalBudgetModalContent');
-    const input = document.getElementById('globalBudgetInput');
-    const error = document.getElementById('globalBudgetError');
+function openBudgetModal() {
+    ensureBudgetModal();
+    const modal = document.getElementById('forceBudgetModal');
+    const content = document.getElementById('forceBudgetModalContent');
+    const input = document.getElementById('forceBudgetInput');
+    const error = document.getElementById('forceBudgetError');
 
     if (input) input.value = Number(totalBudgetLimit || DEFAULT_TOTAL_BUDGET);
     error?.classList.add('hidden');
@@ -189,29 +198,28 @@ function openGlobalBudgetModal() {
     }, 10);
 }
 
-function closeGlobalBudgetModal() {
-    const modal = document.getElementById('globalBudgetModal');
-    const content = document.getElementById('globalBudgetModalContent');
+function closeBudgetModal() {
+    const modal = document.getElementById('forceBudgetModal');
+    const content = document.getElementById('forceBudgetModalContent');
     if (!modal || !content) return;
-
     modal.classList.add('opacity-0');
     content.classList.add('scale-95');
     setTimeout(() => modal.classList.add('hidden'), 250);
 }
 
-async function saveGlobalBudget() {
-    if (!canEditBudget(currentUser)) {
-        showBudgetError('บัญชีนี้ไม่มีสิทธิ์แก้ไขงบประมาณรวม');
+async function saveBudget() {
+    if (!canEdit) {
+        showError('บัญชีนี้ไม่มีสิทธิ์แก้ไขงบประมาณรวม');
         return;
     }
 
-    const input = document.getElementById('globalBudgetInput');
-    const spinner = document.getElementById('saveGlobalBudgetSpinner');
-    const saveBtn = document.getElementById('saveGlobalBudgetBtn');
+    const input = document.getElementById('forceBudgetInput');
+    const saveBtn = document.getElementById('forceSaveBudgetBtn');
+    const spinner = document.getElementById('forceSaveBudgetSpinner');
     const value = Number(input?.value || 0);
 
     if (!Number.isFinite(value) || value < 0) {
-        showBudgetError('กรุณาระบุงบประมาณรวมให้ถูกต้อง');
+        showError('กรุณาระบุงบประมาณรวมให้ถูกต้อง');
         return;
     }
 
@@ -226,31 +234,31 @@ async function saveGlobalBudget() {
             updatedAt: serverTimestamp()
         }, { merge: true });
 
-        closeGlobalBudgetModal();
+        closeBudgetModal();
     } catch (error) {
-        console.error('Save global budget error:', error);
-        showBudgetError('บันทึกงบประมาณรวมไม่สำเร็จ กรุณาตรวจสอบ Firestore Rules ของ settings/budget');
+        console.error('[budget-editor-force] save error:', error);
+        showError('บันทึกไม่สำเร็จ กรุณาตรวจสอบ Firestore Rules ของ settings/budget');
     } finally {
         saveBtn.disabled = false;
         spinner?.classList.add('hidden');
     }
 }
 
-function showBudgetError(message) {
-    const error = document.getElementById('globalBudgetError');
+function showError(message) {
+    const error = document.getElementById('forceBudgetError');
     if (!error) return;
     error.textContent = message;
     error.classList.remove('hidden');
 }
 
-function updateBudgetOverviewText() {
-    const titleEl = findBudgetTitleElement();
-    if (titleEl) {
-        titleEl.id = 'globalBudgetTitle';
-        titleEl.textContent = `ภาพรวมงบประมาณฝ่ายปีปัจจุบัน (${formatNumber(totalBudgetLimit)} THB)`;
+function updateBudgetText() {
+    const title = findBudgetTitle();
+    if (title) {
+        title.id = 'globalBudgetTitle';
+        title.textContent = `ภาพรวมงบประมาณฝ่ายปีปัจจุบัน (${formatNumber(totalBudgetLimit)} THB)`;
     }
 
-    const spent = parseThaiNumber(document.getElementById('globalSpent')?.textContent || '0');
+    const spent = parseNumber(document.getElementById('globalSpent')?.textContent || '0');
     const remaining = totalBudgetLimit - spent;
     const percent = totalBudgetLimit > 0 ? (spent / totalBudgetLimit) * 100 : 0;
 
@@ -266,8 +274,8 @@ function setText(id, text) {
     if (el) el.textContent = text;
 }
 
-function parseThaiNumber(text) {
-    return Number(String(text || '0').replace(/[^0-9.-]/g, '')) || 0;
+function parseNumber(value) {
+    return Number(String(value || '0').replace(/[^0-9.-]/g, '')) || 0;
 }
 
 function formatNumber(value) {
