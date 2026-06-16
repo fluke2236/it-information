@@ -1,0 +1,26 @@
+/* assets/css/header.css */
+
+.nav-item.active {
+    color: #ffffff;
+}
+
+#sidebar {
+    will-change: transform;
+}
+
+#mobileOverlay {
+    transition: opacity 0.3s ease;
+}
+
+.theme-toggle-btn {
+    position: relative;
+    overflow: hidden;
+}
+
+.nav-item {
+    user-select: none;
+}
+
+header {
+    backdrop-filter: blur(10px);
+}

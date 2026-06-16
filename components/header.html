@@ -1,0 +1,133 @@
+<!-- Mobile Overlay -->
+<div id="mobileOverlay"
+     class="fixed inset-0 bg-slate-900/50 dark:bg-black/60 backdrop-blur-sm z-40 hidden md:hidden transition-opacity duration-300 opacity-0">
+</div>
+
+<!-- Sidebar -->
+<aside id="sidebar"
+       class="fixed inset-y-0 left-0 z-50 w-72 bg-brand-900 text-slate-300 flex flex-col shadow-xl transform -translate-x-full md:relative md:translate-x-0 transition-transform duration-300 ease-in-out border-r border-slate-800 transition-theme">
+
+    <div class="p-6 flex items-center justify-between border-b border-slate-800 bg-slate-900/50">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 bg-brand-600 dark:bg-sky-600 rounded-lg flex items-center justify-center shadow-sm text-white transition-theme">
+                <i class="ph ph-buildings text-xl"></i>
+            </div>
+            <div>
+                <h1 class="text-base font-bold text-white whitespace-nowrap tracking-wide">
+                    ระบบบริหารจัดการ
+                </h1>
+                <p class="text-[10px] text-brand-100/70 leading-tight">
+                    สารสนเทศและสื่อสารองค์กร
+                </p>
+            </div>
+        </div>
+
+        <button id="closeSidebarBtn"
+                class="md:hidden w-8 h-8 rounded-md flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800">
+            <i class="ph ph-x text-xl"></i>
+        </button>
+    </div>
+
+    <div class="p-6 flex-1 overflow-y-auto">
+        <div class="text-[11px] text-slate-500 uppercase tracking-wider mb-3 font-semibold">
+            เมนูหลัก
+        </div>
+
+        <nav class="space-y-1.5" id="sidebarNav">
+            <a href="dashboard.html" data-page="dashboard"
+               class="nav-item flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors">
+                <i class="ph ph-squares-four text-lg"></i>
+                <span>ภาพรวม (Dashboard)</span>
+            </a>
+
+            <a href="leave.html" data-page="leave"
+               class="nav-item flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors">
+                <i class="ph ph-calendar-blank text-lg"></i>
+                <span>ระบบจัดการวันลา</span>
+            </a>
+
+            <a href="projects.html" data-page="projects"
+               class="nav-item flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors">
+                <i class="ph ph-chart-line-up text-lg"></i>
+                <span>โครงการและงบประมาณ</span>
+            </a>
+        </nav>
+
+        <div id="adminMenu" class="hidden mt-8">
+            <div class="text-[11px] text-slate-500 uppercase tracking-wider mb-3 font-semibold">
+                ผู้ดูแลระบบ
+            </div>
+
+            <nav class="space-y-1.5">
+                <a href="admin.html" data-page="admin"
+                   class="nav-item flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors">
+                    <i class="ph ph-users text-lg"></i>
+                    <span>จัดการผู้ใช้งานและสิทธิ์</span>
+                </a>
+            </nav>
+        </div>
+    </div>
+
+    <div class="p-6 border-t border-slate-800 bg-slate-900/80">
+        <div class="flex items-center gap-3 mb-4">
+            <div class="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center text-slate-300 border border-slate-700">
+                <i class="ph ph-user text-xl"></i>
+            </div>
+
+            <div class="overflow-hidden">
+                <div id="userName" class="text-sm font-medium text-white truncate">
+                    กำลังโหลด...
+                </div>
+                <div id="userRole" class="text-[11px] text-brand-400 dark:text-sky-400 truncate">
+                    ...
+                </div>
+            </div>
+        </div>
+
+        <button id="logoutBtn"
+                class="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm text-red-400 hover:text-white hover:bg-red-500 rounded-lg transition-colors border border-red-500/30">
+            <i class="ph ph-sign-out"></i>
+            <span>ออกจากระบบ</span>
+        </button>
+    </div>
+</aside>
+
+<!-- Main Content -->
+<main class="flex-1 flex flex-col min-w-0 bg-slate-50 dark:bg-slate-900 transition-theme">
+
+    <!-- Top Header -->
+    <header class="bg-white dark:bg-slate-800 h-20 flex items-center justify-between px-6 lg:px-8 z-30 sticky top-0 border-b border-slate-200 dark:border-slate-700 shadow-sm transition-theme">
+        <div class="flex items-center gap-4">
+            <button id="mobileMenuBtn"
+                    class="md:hidden w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-200 transition-colors">
+                <i class="ph ph-list text-xl"></i>
+            </button>
+
+            <div>
+                <h2 id="pageTitle"
+                    class="text-xl md:text-2xl font-bold text-slate-800 dark:text-white transition-theme">
+                    ภาพรวมระบบ
+                </h2>
+                <p id="pageSubtitle"
+                   class="text-sm text-slate-500 dark:text-slate-400 hidden sm:block transition-theme">
+                    ข้อมูลสรุปการทำงานและสถานะปัจจุบัน
+                </p>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-3">
+            <button id="themeToggleBtn"
+                    class="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 flex items-center justify-center text-slate-600 dark:text-yellow-400 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors theme-toggle-btn">
+                <i class="ph-fill ph-sun text-xl theme-toggle-icon sun-icon"></i>
+                <i class="ph-fill ph-moon text-xl theme-toggle-icon moon-icon"></i>
+            </button>
+
+            <button class="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:text-brand-600 dark:hover:text-sky-400 hover:bg-brand-50 dark:hover:bg-slate-600 transition-colors relative">
+                <i class="ph ph-bell text-lg"></i>
+                <span class="absolute top-2.5 right-2.5 w-2 h-2 bg-red-500 rounded-full border border-white dark:border-slate-800"></span>
+            </button>
+        </div>
+    </header>
+
+    <div class="flex-1 overflow-y-auto p-6 lg:p-8 z-10" id="pageContent">
+``
