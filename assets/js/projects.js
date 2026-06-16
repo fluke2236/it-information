@@ -1,7 +1,7 @@
 // assets/js/projects.js
-// Stable Projects + Budget Manager
-// แก้ 2 จุด: เพิ่มโครงการแล้วไม่ขึ้นรายการ + ปุ่มแก้งบรวมไม่ขึ้น
-// Version: projects-stable-budget-v6
+// Project workflow: Draft -> Submit -> Manager Approve / Reject / Request Edit
+// Auto-clean rejected projects older than 30 days when this page loads/listens
+// Version: projects-draft-review-autoclean-v7
 
 import { db, auth } from './firebase-config.js';
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
@@ -12,15 +12,17 @@ import {
   addDoc,
   updateDoc,
   setDoc,
+  deleteDoc,
   onSnapshot,
   serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-console.log('projects.js loaded: projects-stable-budget-v6');
+console.log('projects.js loaded: projects-draft-review-autoclean-v7');
 
 const DEFAULT_TOTAL_BUDGET = 1500000;
 const PROJECTS_COLLECTION = 'projects';
 const BUDGET_REF = doc(db, 'settings', 'budget');
+const REJECTED_AUTO_DELETE_DAYS = 30;
 
 let currentUser = null;
 let currentUserUid = null;
@@ -28,10 +30,11 @@ let isMockMode = false;
 let canApprove = false;
 let totalBudgetLimit = DEFAULT_TOTAL_BUDGET;
 let lastApprovedBudgetTotal = 0;
-let currentActionProjectId = null;
-let currentActionProject = null;
 let unsubscribeProjects = null;
 let unsubscribeBudget = null;
+let currentActionProjectId = null;
+let currentActionProject = null;
+let currentEditProjectId = null;
 
 window.projectsMap = new Map();
 
@@ -115,16 +118,14 @@ async function initPage() {
 
   canApprove = await canApproveBudgetAndProjects();
 
-  const canCreate = canCreateProject();
-  if (canCreate) document.getElementById('createProjectBtn')?.classList.remove('hidden');
+  if (canCreateProject()) document.getElementById('createProjectBtn')?.classList.remove('hidden');
 
   ensureProjectDurationFields();
+  ensureProjectFormButtons();
   ensureActionBudgetFields();
   ensureGlobalBudgetButtonAndModal();
 
-  if (canApprove) {
-    document.getElementById('editGlobalBudgetBtn')?.classList.remove('hidden');
-  }
+  if (canApprove) document.getElementById('editGlobalBudgetBtn')?.classList.remove('hidden');
 
   setupProjectModal();
   setupActionModal();
@@ -176,13 +177,12 @@ function isAdminLike(role) {
 function canCreateProject() {
   const raw = String(currentUser?.role || '').trim();
   const lower = normalizeRole(raw);
-  return CREATOR_ROLES.has(raw) || CREATOR_ROLES.has(lower) || true; // ให้ login แล้วเสนอได้
+  return CREATOR_ROLES.has(raw) || CREATOR_ROLES.has(lower) || true;
 }
 
 async function canApproveBudgetAndProjects() {
   if (isAllowedRole(currentUser?.role)) return true;
 
-  // รองรับ user_overrides/{uid}.overrides.approve_project = allow
   try {
     if (!isMockMode && currentUserUid) {
       const overrideSnap = await getDoc(doc(db, 'user_overrides', currentUserUid));
@@ -198,7 +198,7 @@ async function canApproveBudgetAndProjects() {
   return isAllowedRole(visibleRole);
 }
 
-// ---------- UI injection เพื่อไม่ต้องพึ่ง HTML เวอร์ชันล่าสุด ----------
+// ---------- UI injection ----------
 function ensureProjectDurationFields() {
   if (document.getElementById('projNoDeadline')) return;
 
@@ -227,6 +227,27 @@ function ensureProjectDurationFields() {
   budgetWrapper.insertAdjacentElement('afterend', box);
 
   document.getElementById('projNoDeadline')?.addEventListener('change', toggleProjectDates);
+}
+
+function ensureProjectFormButtons() {
+  const saveBtn = document.getElementById('saveProjectBtn');
+  if (!saveBtn) return;
+
+  // เปลี่ยนปุ่มเดิมให้เป็นบันทึกร่าง
+  saveBtn.dataset.action = 'draft';
+  const span = saveBtn.querySelector('span');
+  if (span) span.textContent = 'บันทึกร่าง';
+
+  if (document.getElementById('submitProjectNowBtn')) return;
+
+  const submitBtn = document.createElement('button');
+  submitBtn.type = 'button';
+  submitBtn.id = 'submitProjectNowBtn';
+  submitBtn.className = 'px-5 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-sm transition-colors flex items-center';
+  submitBtn.innerHTML = '<span>บันทึกและส่ง</span>';
+  submitBtn.addEventListener('click', () => submitProjectForm('pending'));
+
+  saveBtn.insertAdjacentElement('afterend', submitBtn);
 }
 
 function toggleProjectDates() {
@@ -268,12 +289,28 @@ function ensureActionBudgetFields() {
       <input type="number" id="approveBudget" min="0" step="1000" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none">
     </div>
     <div>
-      <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">หมายเหตุการอนุมัติ</label>
-      <textarea id="approveNote" rows="2" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none"></textarea>
+      <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">คอมเมนต์ถึงพนักงาน</label>
+      <textarea id="approveNote" rows="3" placeholder="ใช้เมื่อขอแก้ไขหรือแจ้งเหตุผลไม่อนุมัติ" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none"></textarea>
     </div>
   `;
 
   buttonRow.insertAdjacentElement('beforebegin', box);
+
+  const approveBtn = document.getElementById('btnApproveProj');
+  const rejectBtn = document.getElementById('btnRejectProj');
+
+  if (approveBtn) approveBtn.textContent = 'อนุมัติ';
+  if (rejectBtn) rejectBtn.textContent = 'ไม่อนุมัติ';
+
+  if (!document.getElementById('btnRequestEditProj')) {
+    const requestEditBtn = document.createElement('button');
+    requestEditBtn.id = 'btnRequestEditProj';
+    requestEditBtn.type = 'button';
+    requestEditBtn.className = 'px-4 py-2 rounded-lg bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/50 font-medium transition-colors';
+    requestEditBtn.textContent = 'ขอแก้ไข';
+    requestEditBtn.addEventListener('click', () => requestEditProject(closeActionModal));
+    rejectBtn?.insertAdjacentElement('afterend', requestEditBtn);
+  }
 }
 
 function ensureGlobalBudgetButtonAndModal() {
@@ -345,16 +382,18 @@ function ensureGlobalBudgetModal() {
   document.body.appendChild(modal);
 }
 
-// ---------- modal handlers ----------
+// ---------- project modal ----------
 function setupProjectModal() {
   const modal = document.getElementById('projectModal');
   const content = document.getElementById('projectModalContent');
   const form = document.getElementById('projectForm');
 
-  function toggle(show) {
+  function toggle(show, project = null) {
     if (!modal || !content || !form) return;
     if (show) {
       ensureProjectDurationFields();
+      ensureProjectFormButtons();
+      fillProjectForm(project);
       modal.classList.remove('hidden');
       setTimeout(() => {
         modal.classList.remove('opacity-0');
@@ -364,6 +403,7 @@ function setupProjectModal() {
       modal.classList.add('opacity-0');
       content.classList.add('scale-95');
       setTimeout(() => modal.classList.add('hidden'), 250);
+      currentEditProjectId = null;
       form.reset();
       document.getElementById('projectModalError')?.classList.add('hidden');
       const start = document.getElementById('projStartDate');
@@ -373,52 +413,95 @@ function setupProjectModal() {
     }
   }
 
-  document.getElementById('createProjectBtn')?.addEventListener('click', () => toggle(true));
+  window.openProjectDraftModal = () => toggle(true, null);
+  window.openProjectEditModal = (id) => {
+    const project = window.projectsMap.get(id);
+    if (!project) return;
+    toggle(true, project);
+  };
+
+  document.getElementById('createProjectBtn')?.addEventListener('click', () => toggle(true, null));
   document.getElementById('closeProjectModalBtn')?.addEventListener('click', () => toggle(false));
   document.getElementById('cancelProjectModalBtn')?.addEventListener('click', () => toggle(false));
 
   form?.addEventListener('submit', async (event) => {
     event.preventDefault();
+    await submitProjectForm('draft');
+  });
+}
 
-    const errorEl = document.getElementById('projectModalError');
-    const saveBtn = document.getElementById('saveProjectBtn');
-    const spinner = document.getElementById('saveProjectSpinner');
+function fillProjectForm(project) {
+  currentEditProjectId = project?.id || null;
+  setValue('projTitle', project?.title || '');
+  setValue('projDesc', project?.description || '');
+  setValue('projBudget', project?.requestedBudget || '');
+  setValue('projStartDate', project?.startDate || '');
+  setValue('projEndDate', project?.endDate || '');
+  const noDeadline = document.getElementById('projNoDeadline');
+  if (noDeadline) noDeadline.checked = Boolean(project?.noDeadline);
+  toggleProjectDates();
+}
 
-    errorEl?.classList.add('hidden');
-    if (saveBtn) saveBtn.disabled = true;
-    spinner?.classList.remove('hidden');
+async function submitProjectForm(nextStatus) {
+  const errorEl = document.getElementById('projectModalError');
+  const saveBtn = document.getElementById('saveProjectBtn');
+  const submitBtn = document.getElementById('submitProjectNowBtn');
+  const spinner = document.getElementById('saveProjectSpinner');
 
-    const title = document.getElementById('projTitle')?.value.trim();
-    const description = document.getElementById('projDesc')?.value.trim();
-    const requestedBudget = Number(document.getElementById('projBudget')?.value || 0);
-    const noDeadline = Boolean(document.getElementById('projNoDeadline')?.checked);
-    const startDate = document.getElementById('projStartDate')?.value || '';
-    const endDate = document.getElementById('projEndDate')?.value || '';
+  errorEl?.classList.add('hidden');
+  if (saveBtn) saveBtn.disabled = true;
+  if (submitBtn) submitBtn.disabled = true;
+  spinner?.classList.remove('hidden');
 
-    if (!title || !description || requestedBudget < 0) {
-      showFormError(errorEl, 'กรุณากรอกข้อมูลให้ครบถ้วน และงบประมาณต้องไม่ติดลบ');
-      resetSubmit(saveBtn, spinner);
-      return;
-    }
+  const title = document.getElementById('projTitle')?.value.trim();
+  const description = document.getElementById('projDesc')?.value.trim();
+  const requestedBudget = Number(document.getElementById('projBudget')?.value || 0);
+  const noDeadline = Boolean(document.getElementById('projNoDeadline')?.checked);
+  const startDate = document.getElementById('projStartDate')?.value || '';
+  const endDate = document.getElementById('projEndDate')?.value || '';
 
-    if (!noDeadline && (!startDate || !endDate)) {
-      showFormError(errorEl, 'กรุณาระบุวันที่เริ่มต้นและวันที่สิ้นสุด หรือเลือกไม่มีกำหนดเวลา');
-      resetSubmit(saveBtn, spinner);
-      return;
-    }
+  if (!title || !description || requestedBudget < 0) {
+    showFormError(errorEl, 'กรุณากรอกข้อมูลให้ครบถ้วน และงบประมาณต้องไม่ติดลบ');
+    resetSubmit(saveBtn, submitBtn, spinner);
+    return;
+  }
 
-    if (!noDeadline && startDate > endDate) {
-      showFormError(errorEl, 'วันที่สิ้นสุดต้องไม่น้อยกว่าวันที่เริ่มต้น');
-      resetSubmit(saveBtn, spinner);
-      return;
-    }
+  if (!noDeadline && (!startDate || !endDate)) {
+    showFormError(errorEl, 'กรุณาระบุวันที่เริ่มต้นและวันที่สิ้นสุด หรือเลือกไม่มีกำหนดเวลา');
+    resetSubmit(saveBtn, submitBtn, spinner);
+    return;
+  }
 
-    try {
+  if (!noDeadline && startDate > endDate) {
+    showFormError(errorEl, 'วันที่สิ้นสุดต้องไม่น้อยกว่าวันที่เริ่มต้น');
+    resetSubmit(saveBtn, submitBtn, spinner);
+    return;
+  }
+
+  const basePayload = {
+    title,
+    name: title,
+    description,
+    requestedBudget,
+    noDeadline,
+    startDate: noDeadline ? null : startDate,
+    endDate: noDeadline ? null : endDate,
+    durationLabel: noDeadline ? 'ไม่มีกำหนดเวลา' : formatProjectDuration(startDate, endDate),
+    updatedAt: serverTimestamp()
+  };
+
+  try {
+    if (currentEditProjectId) {
+      const existing = window.projectsMap.get(currentEditProjectId);
+      await updateDoc(doc(db, PROJECTS_COLLECTION, currentEditProjectId), {
+        ...basePayload,
+        status: nextStatus,
+        submittedAt: nextStatus === 'pending' ? serverTimestamp() : (existing?.submittedAt || null),
+        revisionResolvedAt: existing?.status === 'revision_requested' && nextStatus === 'pending' ? serverTimestamp() : null
+      });
+    } else {
       await addDoc(collection(db, PROJECTS_COLLECTION), {
-        title,
-        name: title,
-        description,
-        requestedBudget,
+        ...basePayload,
         budgetAllocated: 0,
         budgetSpent: 0,
         totalBudget: 0,
@@ -426,32 +509,43 @@ function setupProjectModal() {
         progress: 0,
         code: 'งา',
         accent: '#3b82f6',
-        noDeadline,
-        startDate: noDeadline ? null : startDate,
-        endDate: noDeadline ? null : endDate,
-        durationLabel: noDeadline ? 'ไม่มีกำหนดเวลา' : formatProjectDuration(startDate, endDate),
-        status: 'pending',
+        status: nextStatus,
         createdBy: currentUserUid,
         creatorName: currentUser?.name || currentUser?.email || 'Unknown',
         ownerName: currentUser?.name || currentUser?.email || 'Unknown',
         createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
+        submittedAt: nextStatus === 'pending' ? serverTimestamp() : null
       });
-      toggle(false);
-    } catch (error) {
-      console.error('Create project error:', error);
-      showFormError(errorEl, `เกิดข้อผิดพลาดในการบันทึกข้อมูล: ${error.code || error.message || error}`);
-    } finally {
-      resetSubmit(saveBtn, spinner);
     }
-  });
+
+    closeProjectModal();
+  } catch (error) {
+    console.error('Save project error:', error);
+    showFormError(errorEl, `เกิดข้อผิดพลาดในการบันทึกข้อมูล: ${error.code || error.message || error}`);
+  } finally {
+    resetSubmit(saveBtn, submitBtn, spinner);
+  }
 }
 
-function resetSubmit(saveBtn, spinner) {
+function closeProjectModal() {
+  const modal = document.getElementById('projectModal');
+  const content = document.getElementById('projectModalContent');
+  const form = document.getElementById('projectForm');
+  if (!modal || !content) return;
+  modal.classList.add('opacity-0');
+  content.classList.add('scale-95');
+  setTimeout(() => modal.classList.add('hidden'), 250);
+  currentEditProjectId = null;
+  form?.reset();
+}
+
+function resetSubmit(saveBtn, submitBtn, spinner) {
   if (saveBtn) saveBtn.disabled = false;
+  if (submitBtn) submitBtn.disabled = false;
   spinner?.classList.add('hidden');
 }
 
+// ---------- action modal ----------
 function setupActionModal() {
   const modal = document.getElementById('actionModal');
   const content = document.getElementById('actionModalContent');
@@ -472,12 +566,7 @@ function setupActionModal() {
     if (approveBudget) approveBudget.value = Number(project.totalBudget || project.budgetAllocated || project.requestedBudget || 0);
 
     const note = document.getElementById('approveNote');
-    if (note) note.value = project.approveNote || '';
-
-    const approveBtn = document.getElementById('btnApproveProj');
-    const rejectBtn = document.getElementById('btnRejectProj');
-    if (approveBtn) approveBtn.textContent = project.status === 'approved' ? 'บันทึกงบประมาณ' : 'อนุมัติโครงการ';
-    if (rejectBtn) rejectBtn.classList.toggle('hidden', project.status === 'approved');
+    if (note) note.value = project.managerComment || project.approveNote || '';
 
     modal.classList.remove('hidden');
     setTimeout(() => {
@@ -486,86 +575,108 @@ function setupActionModal() {
     }, 10);
   };
 
-  function close() {
-    modal.classList.add('opacity-0');
-    content.classList.add('scale-95');
-    setTimeout(() => modal.classList.add('hidden'), 250);
-    currentActionProjectId = null;
-    currentActionProject = null;
-  }
+  window.closeActionModal = closeActionModal;
 
-  document.getElementById('closeActionModal')?.addEventListener('click', close);
-  document.getElementById('btnApproveProj')?.addEventListener('click', () => approveOrUpdateBudget(close));
-  document.getElementById('btnRejectProj')?.addEventListener('click', () => rejectProject(close));
+  document.getElementById('closeActionModal')?.addEventListener('click', closeActionModal);
+  document.getElementById('btnApproveProj')?.addEventListener('click', () => approveProject(closeActionModal));
+  document.getElementById('btnRejectProj')?.addEventListener('click', () => rejectProject(closeActionModal));
 }
 
-async function approveOrUpdateBudget(closeModal) {
+function closeActionModal() {
+  const modal = document.getElementById('actionModal');
+  const content = document.getElementById('actionModalContent');
+  if (!modal || !content) return;
+  modal.classList.add('opacity-0');
+  content.classList.add('scale-95');
+  setTimeout(() => modal.classList.add('hidden'), 250);
+  currentActionProjectId = null;
+  currentActionProject = null;
+}
+
+async function approveProject(closeModal) {
   if (!currentActionProjectId) return;
-  if (!canApprove) {
-    alert('บัญชีนี้ไม่มีสิทธิ์อนุมัติหรือแก้งบประมาณ');
-    return;
-  }
+  if (!canApprove) return alert('บัญชีนี้ไม่มีสิทธิ์อนุมัติหรือแก้งบประมาณ');
 
   const budget = Number(document.getElementById('approveBudget')?.value || 0);
-  const note = document.getElementById('approveNote')?.value.trim() || '';
+  const comment = document.getElementById('approveNote')?.value.trim() || '';
 
-  if (budget < 0) {
-    alert('งบประมาณต้องไม่ติดลบ');
-    return;
-  }
+  if (budget < 0) return alert('งบประมาณต้องไม่ติดลบ');
 
   try {
-    const payload = {
+    await updateDoc(doc(db, PROJECTS_COLLECTION, currentActionProjectId), {
       status: 'approved',
       budgetAllocated: budget,
       totalBudget: budget,
       usedBudget: Number(currentActionProject?.usedBudget || currentActionProject?.budgetSpent || 0),
-      name: currentActionProject?.name || currentActionProject?.title || 'ไม่ระบุชื่อโครงการ',
-      ownerName: currentActionProject?.ownerName || currentActionProject?.creatorName || 'Unknown',
-      noDeadline: Boolean(currentActionProject?.noDeadline),
-      startDate: currentActionProject?.startDate || null,
-      endDate: currentActionProject?.endDate || null,
-      durationLabel: currentActionProject?.durationLabel || getProjectDurationText(currentActionProject),
       approverId: currentUserUid,
       approverName: currentUser?.name || currentUser?.email || 'Unknown',
-      approveNote: note,
-      updatedAt: serverTimestamp()
-    };
-
-    if (currentActionProject?.status !== 'approved') payload.approvedAt = serverTimestamp();
-
-    await updateDoc(doc(db, PROJECTS_COLLECTION, currentActionProjectId), payload);
+      managerComment: comment,
+      approvedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      rejectedAt: null,
+      autoDeleteAt: null
+    });
     closeModal();
   } catch (error) {
-    console.error('Approve/update budget error:', error);
+    console.error('Approve error:', error);
     alert(`อัปเดตไม่สำเร็จ: ${error.code || error.message || error}`);
   }
 }
 
 async function rejectProject(closeModal) {
   if (!currentActionProjectId) return;
-  if (!canApprove) {
-    alert('บัญชีนี้ไม่มีสิทธิ์ไม่อนุมัติโครงการ');
-    return;
-  }
+  if (!canApprove) return alert('บัญชีนี้ไม่มีสิทธิ์ไม่อนุมัติโครงการ');
+
+  const comment = document.getElementById('approveNote')?.value.trim() || '';
 
   try {
+    const rejectedAtDate = new Date();
+    const autoDeleteAtDate = addDays(rejectedAtDate, REJECTED_AUTO_DELETE_DAYS);
+
     await updateDoc(doc(db, PROJECTS_COLLECTION, currentActionProjectId), {
       status: 'rejected',
       totalBudget: 0,
       budgetAllocated: 0,
       approverId: currentUserUid,
       approverName: currentUser?.name || currentUser?.email || 'Unknown',
+      managerComment: comment,
       rejectedAt: serverTimestamp(),
+      autoDeleteAt: autoDeleteAtDate,
       updatedAt: serverTimestamp()
     });
     closeModal();
   } catch (error) {
-    console.error('Reject project error:', error);
+    console.error('Reject error:', error);
     alert(`อัปเดตไม่สำเร็จ: ${error.code || error.message || error}`);
   }
 }
 
+async function requestEditProject(closeModal) {
+  if (!currentActionProjectId) return;
+  if (!canApprove) return alert('บัญชีนี้ไม่มีสิทธิ์ขอแก้ไขโครงการ');
+
+  const comment = document.getElementById('approveNote')?.value.trim() || '';
+  if (!comment) return alert('กรุณาใส่คอมเมนต์เพื่อแจ้งพนักงานว่าต้องแก้ไขอะไร');
+
+  try {
+    await updateDoc(doc(db, PROJECTS_COLLECTION, currentActionProjectId), {
+      status: 'revision_requested',
+      managerComment: comment,
+      revisionRequestedBy: currentUserUid,
+      revisionRequestedByName: currentUser?.name || currentUser?.email || 'Unknown',
+      revisionRequestedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      rejectedAt: null,
+      autoDeleteAt: null
+    });
+    closeModal();
+  } catch (error) {
+    console.error('Request edit error:', error);
+    alert(`อัปเดตไม่สำเร็จ: ${error.code || error.message || error}`);
+  }
+}
+
+// ---------- global budget ----------
 function setupGlobalBudgetModal() {
   document.getElementById('editGlobalBudgetBtn')?.addEventListener('click', openGlobalBudgetModal);
   document.getElementById('closeGlobalBudgetModalBtn')?.addEventListener('click', closeGlobalBudgetModal);
@@ -654,22 +765,33 @@ function listenGlobalBudget() {
   });
 }
 
+// ---------- list ----------
 function listenProjects() {
   const grid = document.getElementById('projectsGrid');
   if (!grid) return;
 
   if (unsubscribeProjects) unsubscribeProjects();
 
-  unsubscribeProjects = onSnapshot(collection(db, PROJECTS_COLLECTION), (snapshot) => {
+  unsubscribeProjects = onSnapshot(collection(db, PROJECTS_COLLECTION), async (snapshot) => {
     grid.innerHTML = '';
     window.projectsMap = new Map();
     let approvedTotal = 0;
-
     const items = [];
-    snapshot.forEach((docSnap) => {
+
+    for (const docSnap of snapshot.docs) {
       const data = normalizeProjectDoc(docSnap.id, docSnap.data());
+
+      if (shouldAutoDeleteRejected(data)) {
+        try {
+          await deleteDoc(doc(db, PROJECTS_COLLECTION, docSnap.id));
+          continue;
+        } catch (error) {
+          console.warn('Auto delete rejected project failed:', error);
+        }
+      }
+
       items.push(data);
-    });
+    }
 
     items.sort((a, b) => getTime(b.createdAt) - getTime(a.createdAt));
 
@@ -714,22 +836,44 @@ function normalizeProjectDoc(id, data) {
     startDate: data.startDate || null,
     endDate: data.endDate || null,
     durationLabel: data.durationLabel || getProjectDurationText(data),
-    status: data.status || 'pending'
+    status: data.status || 'draft',
+    managerComment: data.managerComment || data.approveNote || ''
   };
 }
 
 function createProjectCard(id, data) {
   const statusMap = {
+    draft: { label: 'ร่าง', class: 'bg-slate-100 text-slate-700 dark:bg-slate-700/50 dark:text-slate-200 border-slate-200 dark:border-slate-700' },
     pending: { label: 'รอหัวหน้าอนุมัติ', class: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-amber-200 dark:border-amber-800/50' },
+    revision_requested: { label: 'ให้แก้ไข', class: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300 border-orange-200 dark:border-orange-800/50' },
     approved: { label: 'อนุมัติแล้ว', class: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/50' },
     rejected: { label: 'ไม่อนุมัติ', class: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 border-red-200 dark:border-red-800/50' }
   };
 
-  const statusInfo = statusMap[data.status] || statusMap.pending;
+  const statusInfo = statusMap[data.status] || statusMap.draft;
   const dateStr = data.createdAt?.toDate ? data.createdAt.toDate().toLocaleDateString('th-TH') : '';
+  const isOwner = data.createdBy === currentUserUid;
+  const commentHtml = data.managerComment
+    ? `<div class="mt-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 p-3 text-xs text-amber-700 dark:text-amber-300"><b>คอมเมนต์หัวหน้า:</b> ${escapeHtml(data.managerComment)}</div>`
+    : '';
 
-  const actionButton = canApprove && ['pending', 'approved'].includes(data.status)
-    ? `<div class="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700/50"><button onclick="window.openActionModal('${id}')" class="w-full py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-white text-sm font-medium rounded-lg transition-colors">${data.status === 'approved' ? 'แก้ไขงบประมาณ' : 'พิจารณาโครงการ'}</button></div>`
+  let actionButton = '';
+
+  if (isOwner && ['draft', 'revision_requested'].includes(data.status)) {
+    actionButton = `
+      <div class="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700/50 grid grid-cols-2 gap-2">
+        <button onclick="window.openProjectEditModal('${id}')" class="py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-white text-sm font-medium rounded-lg transition-colors">แก้ไข</button>
+        <button onclick="window.submitSavedProject('${id}')" class="py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition-colors">ส่งโครงการ</button>
+      </div>`;
+  } else if (canApprove && ['pending', 'approved'].includes(data.status)) {
+    actionButton = `
+      <div class="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700/50">
+        <button onclick="window.openActionModal('${id}')" class="w-full py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-white text-sm font-medium rounded-lg transition-colors">${data.status === 'approved' ? 'แก้ไขงบประมาณ' : 'พิจารณาโครงการ'}</button>
+      </div>`;
+  }
+
+  const autoDeleteText = data.status === 'rejected'
+    ? `<div class="text-xs text-red-400 mt-1">จะลบอัตโนมัติหลังครบ ${REJECTED_AUTO_DELETE_DAYS} วัน หากไม่มีการเปลี่ยนสถานะ</div>`
     : '';
 
   return `
@@ -742,11 +886,42 @@ function createProjectCard(id, data) {
         <div><div class="text-xs text-slate-500 dark:text-slate-400 mb-1">งบประมาณที่อนุมัติ</div><div class="text-base font-bold text-emerald-600 dark:text-emerald-400">${formatNumber(data.totalBudget || data.budgetAllocated || 0)} <span class="text-xs font-normal">THB</span></div></div>
         <div class="text-xs text-slate-400 mt-1">ผู้เสนอ: ${escapeHtml(data.creatorName || 'Unknown')}</div>
         <div class="text-xs text-slate-400 mt-1">ระยะเวลา: ${escapeHtml(data.durationLabel || getProjectDurationText(data))}</div>
+        ${autoDeleteText}
       </div>
+      ${commentHtml}
       ${actionButton}
     </div>`;
 }
 
+window.submitSavedProject = async (id) => {
+  const project = window.projectsMap.get(id);
+  if (!project) return;
+  try {
+    await updateDoc(doc(db, PROJECTS_COLLECTION, id), {
+      status: 'pending',
+      submittedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      rejectedAt: null,
+      autoDeleteAt: null
+    });
+  } catch (error) {
+    alert(`ส่งโครงการไม่สำเร็จ: ${error.code || error.message || error}`);
+  }
+};
+
+// ---------- auto cleanup ----------
+function shouldAutoDeleteRejected(project) {
+  if (project.status !== 'rejected') return false;
+
+  const baseTime = getTime(project.rejectedAt) || getTime(project.updatedAt);
+  if (!baseTime) return false;
+
+  const ageMs = Date.now() - baseTime;
+  const limitMs = REJECTED_AUTO_DELETE_DAYS * 24 * 60 * 60 * 1000;
+  return ageMs >= limitMs;
+}
+
+// ---------- budget ----------
 function updateGlobalBudget(spent) {
   lastApprovedBudgetTotal = Number(spent || 0);
   const remaining = totalBudgetLimit - lastApprovedBudgetTotal;
@@ -770,10 +945,18 @@ function updateGlobalBudget(spent) {
   else if (percent > 70) bar.className = 'bg-gradient-to-r from-amber-500 to-yellow-400 h-3 rounded-full transition-all duration-1000';
 }
 
+// ---------- helpers ----------
+function addDays(date, days) {
+  const result = new Date(date);
+  result.setDate(result.getDate() + days);
+  return result;
+}
+
 function getTime(ts) {
   if (!ts) return 0;
   if (typeof ts.toMillis === 'function') return ts.toMillis();
   if (typeof ts.toDate === 'function') return ts.toDate().getTime();
+  if (ts instanceof Date) return ts.getTime();
   return 0;
 }
 
@@ -804,6 +987,11 @@ function showFormError(errorEl, message) {
 function setText(id, text) {
   const el = document.getElementById(id);
   if (el) el.textContent = text;
+}
+
+function setValue(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.value = value ?? '';
 }
 
 function formatNumber(value) {
