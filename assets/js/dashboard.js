@@ -3,7 +3,7 @@
 
 const defaultDashboardData = {
     summary: {
-        totalBudget: 1000000,
+        totalBudget: 1000001,
         usedBudget: 850000,
         remainingBudget: 150000
     },
