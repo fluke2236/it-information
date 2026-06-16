@@ -1,346 +1,275 @@
-// assets/js/projects.js
-import { db, auth } from './firebase-config.js';
-import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-import { collection, getDocs, doc, getDoc, addDoc, updateDoc, query, orderBy, Timestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+// assets/js/project-budget-editor-hotfix.js
+// Standalone hotfix: ปุ่มแก้ไขงบประมาณรวมฝ่าย สำหรับ admin / manager / หัวหน้าฝ่าย
+// ใช้ร่วมกับ projects.js เดิมได้ ไม่ต้องแก้ logic หลัก
+// Version: budget-editor-hotfix-v4
 
-let totalBudgetLimit = 1500000;
-let lastApprovedBudgetTotal = 0;
+import { auth, db } from './firebase-config.js';
+import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+import {
+    doc,
+    getDoc,
+    setDoc,
+    onSnapshot,
+    serverTimestamp
+} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-// Shared UI Logic
-const setupSharedUI = () => {
-    const themeToggleBtn = document.getElementById('themeToggleBtn');
-    if (themeToggleBtn) {
-        themeToggleBtn.addEventListener('click', () => {
-            document.documentElement.classList.toggle('dark');
-            localStorage.setItem('color-theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
-        });
-    }
+console.log('project-budget-editor-hotfix.js loaded: budget-editor-hotfix-v4');
 
-    const mobileMenuBtn = document.getElementById('mobileMenuBtn');
-    const closeSidebarBtn = document.getElementById('closeSidebarBtn');
-    const sidebar = document.getElementById('sidebar');
-    const mobileOverlay = document.getElementById('mobileOverlay');
+const DEFAULT_TOTAL_BUDGET = 1500000;
+const SETTINGS_REF = doc(db, 'settings', 'budget');
 
-    const toggleMenu = () => {
-        sidebar.classList.toggle('-translate-x-full');
-        mobileOverlay.classList.toggle('hidden');
-        setTimeout(() => mobileOverlay.classList.toggle('opacity-0'), 10);
-    };
+let currentUser = null;
+let currentUserUid = null;
+let totalBudgetLimit = DEFAULT_TOTAL_BUDGET;
+let unsubscribeBudget = null;
 
-    if(mobileMenuBtn) mobileMenuBtn.addEventListener('click', toggleMenu);
-    if(closeSidebarBtn) closeSidebarBtn.addEventListener('click', toggleMenu);
-    if(mobileOverlay) mobileOverlay.addEventListener('click', toggleMenu);
-};
+const APPROVER_ROLES = new Set([
+    'admin',
+    'administrator',
+    'manager',
+    'head',
+    'department_head',
+    'head_department',
+    'section_head',
+    'supervisor',
+    'director',
+    'หัวหน้าฝ่าย',
+    'หัวหน้างาน',
+    'ผู้ดูแลระบบ'
+]);
 
-document.addEventListener('DOMContentLoaded', () => {
-    setupSharedUI();
+document.addEventListener('DOMContentLoaded', initBudgetEditorHotfix);
 
-    const mockUserStr = localStorage.getItem('mockUser');
-    let currentUser = null;
-    let currentUserUid = null;
-    let canApprove = false;
+function initBudgetEditorHotfix() {
+    onAuthStateChanged(auth, async (user) => {
+        if (!user) return;
 
-    if (mockUserStr) {
-        currentUser = JSON.parse(mockUserStr);
-        currentUserUid = "mock-uid";
-        initProjectSystem(currentUser);
-    } else {
-        onAuthStateChanged(auth, async (user) => {
-            if (user) {
-                try {
-                    const userDoc = await getDoc(doc(db, "users", user.uid));
-                    if (userDoc.exists()) {
-                        currentUser = userDoc.data();
-                        currentUserUid = user.uid;
-                        await initProjectSystem(currentUser, user.uid);
-                    } else {
-                        window.location.href = 'login.html';
-                    }
-                } catch(e) {
-                    console.error("Auth Error:", e);
-                    window.location.href = 'login.html';
-                }
-            } else {
-                window.location.href = 'login.html';
-            }
-        });
-    }
-
-    async function checkPermission(user, uid, action) {
-        if(mockUserStr) {
-            if(action === 'approve_project') return user.role === 'admin';
-            return true;
-        }
-        
-        try {
-            const overrideDoc = await getDoc(doc(db, "user_overrides", uid));
-            if(overrideDoc.exists() && overrideDoc.data().overrides && overrideDoc.data().overrides[action]) {
-                const override = overrideDoc.data().overrides[action];
-                if(override === 'deny') return false;
-                if(override === 'allow') return true;
-            }
-            
-            // Fallback to Role
-            const roleDefaults = {
-                'admin': ['approve_project', 'create_project'],
-                'manager': ['create_project'],
-                'secretary': ['create_project'],
-                'staff': ['create_project']
-            };
-            return (roleDefaults[user.role] || []).includes(action);
-
-        } catch (e) {
-            console.error("Permission check error", e);
-            return false;
-        }
-    }
-
-    async function initProjectSystem(user, uid) {
-        document.getElementById('appBody').classList.remove('hidden');
-        document.getElementById('userName').textContent = user.name;
-        
-        const roleDisplay = { 'admin': 'ผู้ดูแลระบบ', 'manager': 'หัวหน้างาน', 'secretary': 'เลขาฯ', 'staff': 'พนักงานทั่วไป' };
-        document.getElementById('userRole').textContent = roleDisplay[user.role] || user.role;
-
-        if (user.role === 'admin') {
-            document.getElementById('adminMenu').classList.remove('hidden');
-        }
-
-        document.getElementById('logoutBtn').addEventListener('click', () => {
-            if(mockUserStr) {
-                localStorage.removeItem('mockUser');
-                window.location.href = 'login.html';
-            } else {
-                signOut(auth).then(() => window.location.href = 'login.html');
-            }
-        });
-
-        const canCreate = await checkPermission(user, uid, 'create_project');
-        if(canCreate) {
-            document.getElementById('createProjectBtn').classList.remove('hidden');
-        }
-
-        canApprove = await checkPermission(user, uid, 'approve_project');
-
-        setupProjectModal();
-        setupActionModal();
-        loadProjects();
-    }
-
-    function setupProjectModal() {
-        const modal = document.getElementById('projectModal');
-        const content = document.getElementById('projectModalContent');
-        const form = document.getElementById('projectForm');
-
-        function toggleModal(show) {
-            if (show) {
-                modal.classList.remove('hidden');
-                setTimeout(() => {
-                    modal.classList.remove('opacity-0');
-                    content.classList.remove('scale-95');
-                }, 10);
-            } else {
-                modal.classList.add('opacity-0');
-                content.classList.add('scale-95');
-                setTimeout(() => modal.classList.add('hidden'), 300);
-                form.reset();
-                document.getElementById('projectModalError').classList.add('hidden');
-            }
-        }
-
-        document.getElementById('createProjectBtn').addEventListener('click', () => toggleModal(true));
-        document.getElementById('closeProjectModalBtn').addEventListener('click', () => toggleModal(false));
-        document.getElementById('cancelProjectModalBtn').addEventListener('click', () => toggleModal(false));
-
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const errorMsg = document.getElementById('projectModalError');
-            const saveBtn = document.getElementById('saveProjectBtn');
-            const spinner = document.getElementById('saveProjectSpinner');
-            
-            errorMsg.classList.add('hidden');
-            saveBtn.disabled = true;
-            spinner.classList.remove('hidden');
-
-            const title = document.getElementById('projTitle').value;
-            const desc = document.getElementById('projDesc').value;
-            const budget = parseInt(document.getElementById('projBudget').value);
-
-            if (mockUserStr) {
-                alert("Mock Mode: เสนอโครงการสำเร็จ (จำลอง)");
-                toggleModal(false);
-                saveBtn.disabled = false;
-                spinner.classList.add('hidden');
-                return;
-            }
-
-            try {
-                await addDoc(collection(db, "projects"), {
-                    title: title,
-                    description: desc,
-                    budgetAllocated: budget,
-                    budgetSpent: 0,
-                    status: 'pending',
-                    createdBy: currentUserUid,
-                    creatorName: currentUser.name,
-                    createdAt: Timestamp.now()
-                });
-
-                toggleModal(false);
-                loadProjects();
-
-            } catch (error) {
-                console.error("Save Project Error:", error);
-                errorMsg.textContent = "เกิดข้อผิดพลาดในการบันทึกข้อมูล";
-                errorMsg.classList.remove('hidden');
-            } finally {
-                saveBtn.disabled = false;
-                spinner.classList.add('hidden');
-            }
-        });
-    }
-
-    let currentActionProjectId = null;
-    function setupActionModal() {
-        const modal = document.getElementById('actionModal');
-        const content = document.getElementById('actionModalContent');
-
-        window.openActionModal = (id, title) => {
-            currentActionProjectId = id;
-            document.getElementById('actionProjName').textContent = title;
-            modal.classList.remove('hidden');
-            setTimeout(() => {
-                modal.classList.remove('opacity-0');
-                content.classList.remove('scale-95');
-            }, 10);
-        };
-
-        const closeModal = () => {
-            modal.classList.add('opacity-0');
-            content.classList.add('scale-95');
-            setTimeout(() => modal.classList.add('hidden'), 300);
-            currentActionProjectId = null;
-        };
-
-        document.getElementById('closeActionModal').addEventListener('click', closeModal);
-
-        document.getElementById('btnApproveProj').addEventListener('click', () => processAction('approved', closeModal));
-        document.getElementById('btnRejectProj').addEventListener('click', () => processAction('rejected', closeModal));
-    }
-
-    async function processAction(newStatus, closeCb) {
-        if(!currentActionProjectId || mockUserStr) {
-            alert("Mock Mode Action");
-            closeCb();
-            return;
-        }
+        currentUserUid = user.uid;
 
         try {
-            await updateDoc(doc(db, "projects", currentActionProjectId), {
-                status: newStatus,
-                approverId: currentUserUid,
-                updatedAt: Timestamp.now()
-            });
-            closeCb();
-            loadProjects();
-        } catch(e) {
-            console.error("Error updating project", e);
-            alert("อัปเดตไม่สำเร็จ");
-        }
-    }
-
-    async function loadProjects() {
-        const grid = document.getElementById('projectsGrid');
-        
-        if (mockUserStr) {
-            grid.innerHTML = `<div class="col-span-full py-12 text-center text-slate-500">Mock Data Mode</div>`;
-            return;
-        }
-
-        try {
-            const q = query(collection(db, "projects"), orderBy("createdAt", "desc"));
-            const querySnapshot = await getDocs(q);
-            
-            grid.innerHTML = '';
-            let totalSpent = 0;
-            
-            if (querySnapshot.empty) {
-                grid.innerHTML = `<div class="col-span-full py-12 text-center text-slate-500">ยังไม่มีโครงการในระบบ</div>`;
-            }
-
-            querySnapshot.forEach((docSnap) => {
-                const data = docSnap.data();
-                
-                // Calculate budget if approved
-                if(data.status === 'approved') {
-                    totalSpent += data.budgetAllocated; // Assuming all allocated is "spent" from the global budget pool for now
-                }
-
-                const statusMap = {
-                    'pending': { label: 'รอพิจารณา', class: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-amber-200 dark:border-amber-800/50' },
-                    'approved': { label: 'อนุมัติแล้ว', class: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/50' },
-                    'rejected': { label: 'ไม่อนุมัติ', class: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 border-red-200 dark:border-red-800/50' },
-                };
-                const statusInfo = statusMap[data.status] || statusMap['pending'];
-                
-                const dateStr = data.createdAt ? data.createdAt.toDate().toLocaleDateString('th-TH') : '';
-                const budgetFormatted = new Intl.NumberFormat('th-TH').format(data.budgetAllocated);
-
-                let actionHtml = '';
-                if(data.status === 'pending' && canApprove) {
-                    actionHtml = `
-                        <div class="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700/50">
-                            <button onclick="window.openActionModal('${docSnap.id}', '${data.title}')" class="w-full py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-white text-sm font-medium rounded-lg transition-colors">พิจารณาโครงการ</button>
-                        </div>
-                    `;
-                }
-
-                const cardHtml = `
-                    <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-5 bg-white dark:bg-slate-800 shadow-sm hover:shadow-md transition-shadow flex flex-col h-full">
-                        <div class="flex justify-between items-start mb-3">
-                            <span class="inline-block px-2.5 py-1 rounded-full text-[10px] font-bold border ${statusInfo.class}">${statusInfo.label}</span>
-                            <span class="text-xs text-slate-400">${dateStr}</span>
-                        </div>
-                        <h4 class="text-base font-bold text-slate-800 dark:text-white mb-2 line-clamp-2">${data.title}</h4>
-                        <p class="text-sm text-slate-500 dark:text-slate-400 mb-4 line-clamp-3 flex-grow">${data.description}</p>
-                        
-                        <div class="bg-slate-50 dark:bg-slate-900/50 rounded-lg p-3 mt-auto">
-                            <div class="text-xs text-slate-500 dark:text-slate-400 mb-1">งบประมาณที่ขอ</div>
-                            <div class="text-lg font-bold text-brand-600 dark:text-sky-400">${budgetFormatted} <span class="text-xs font-normal">THB</span></div>
-                            <div class="text-xs text-slate-400 mt-1">ผู้เสนอ: ${data.creatorName || 'Unknown'}</div>
-                        </div>
-                        ${actionHtml}
-                    </div>
-                `;
-                
-                grid.innerHTML += cardHtml;
-            });
-
-            updateGlobalBudget(totalSpent);
-
+            const userSnap = await getDoc(doc(db, 'users', user.uid));
+            currentUser = userSnap.exists()
+                ? { uid: user.uid, email: user.email, ...userSnap.data() }
+                : { uid: user.uid, email: user.email, role: '' };
         } catch (error) {
-            console.error("Error loading projects:", error);
-            grid.innerHTML = `<div class="col-span-full py-12 text-center text-red-500">เกิดข้อผิดพลาดในการโหลดข้อมูล</div>`;
+            console.error('Budget editor user role error:', error);
+            currentUser = { uid: user.uid, email: user.email, role: '' };
         }
+
+        listenBudgetSetting();
+
+        if (canEditBudget(currentUser)) {
+            injectGlobalBudgetButton();
+            ensureGlobalBudgetModal();
+        } else {
+            console.warn('Budget editor hidden because user role is:', currentUser?.role);
+        }
+    });
+}
+
+function canEditBudget(user) {
+    const role = String(user?.role || '').trim();
+    return APPROVER_ROLES.has(role);
+}
+
+function listenBudgetSetting() {
+    if (typeof unsubscribeBudget === 'function') unsubscribeBudget();
+
+    unsubscribeBudget = onSnapshot(SETTINGS_REF, (snap) => {
+        if (snap.exists()) {
+            totalBudgetLimit = Number(snap.data().totalBudget || DEFAULT_TOTAL_BUDGET);
+        } else {
+            totalBudgetLimit = DEFAULT_TOTAL_BUDGET;
+        }
+        updateBudgetOverviewText();
+    }, (error) => {
+        console.error('Budget setting listener error:', error);
+        updateBudgetOverviewText();
+    });
+}
+
+function injectGlobalBudgetButton() {
+    if (document.getElementById('editGlobalBudgetBtn')) {
+        document.getElementById('editGlobalBudgetBtn').classList.remove('hidden');
+        return;
     }
 
-    function updateGlobalBudget(spent) {
-        const remaining = TOTAL_BUDGET - spent;
-        const percent = (spent / TOTAL_BUDGET) * 100;
-        
-        document.getElementById('globalSpent').textContent = new Intl.NumberFormat('th-TH').format(spent);
-        document.getElementById('globalRemaining').textContent = new Intl.NumberFormat('th-TH').format(remaining);
-        
-        const bar = document.getElementById('budgetProgressBar');
-        bar.style.width = `${Math.min(percent, 100)}%`;
-        
-        if(percent > 90) {
-            bar.className = "bg-gradient-to-r from-red-500 to-orange-400 h-3 rounded-full transition-all duration-1000";
-        } else if (percent > 70) {
-            bar.className = "bg-gradient-to-r from-amber-500 to-yellow-400 h-3 rounded-full transition-all duration-1000";
-        }
-        
-        document.getElementById('budgetPercent').textContent = percent.toFixed(1);
+    const titleEl = findBudgetTitleElement();
+    if (!titleEl) {
+        console.warn('Budget title element not found. Cannot inject edit button.');
+        return;
     }
-});
+
+    titleEl.id = 'globalBudgetTitle';
+
+    const row = document.createElement('div');
+    row.className = 'relative z-10 flex justify-between items-start gap-4 flex-wrap mb-6';
+
+    const parent = titleEl.parentElement;
+    parent.insertBefore(row, titleEl);
+    row.appendChild(titleEl);
+
+    // ลบ margin เดิมถ้ามี เพื่อไม่ให้ช่องว่างเพี้ยน
+    titleEl.classList.remove('mb-6');
+
+    const button = document.createElement('button');
+    button.id = 'editGlobalBudgetBtn';
+    button.type = 'button';
+    button.className = 'inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold border border-white/15 transition-colors';
+    button.innerHTML = '<i class="ph ph-pencil-simple"></i><span>แก้งบรวม</span>';
+    button.addEventListener('click', openGlobalBudgetModal);
+
+    row.appendChild(button);
+}
+
+function findBudgetTitleElement() {
+    const byId = document.getElementById('globalBudgetTitle');
+    if (byId) return byId;
+
+    const headings = Array.from(document.querySelectorAll('h1,h2,h3,h4,p,div'));
+    return headings.find((el) => String(el.textContent || '').includes('ภาพรวมงบประมาณฝ่าย')) || null;
+}
+
+function ensureGlobalBudgetModal() {
+    if (document.getElementById('globalBudgetModal')) return;
+
+    const modal = document.createElement('div');
+    modal.id = 'globalBudgetModal';
+    modal.className = 'fixed inset-0 bg-slate-900/60 dark:bg-black/80 backdrop-blur-sm z-[80] hidden flex items-center justify-center p-4 opacity-0 transition-opacity duration-300';
+    modal.innerHTML = `
+        <div id="globalBudgetModalContent" class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-md border border-slate-200 dark:border-slate-700 overflow-hidden transform scale-95 transition-transform duration-300">
+            <div class="px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50">
+                <h3 class="text-lg font-bold text-slate-800 dark:text-white">แก้ไขงบประมาณรวมฝ่าย</h3>
+                <button id="closeGlobalBudgetModalBtn" class="text-slate-400 hover:text-slate-600 dark:hover:text-white transition-colors">
+                    <i class="ph ph-x text-xl"></i>
+                </button>
+            </div>
+            <div class="p-6 space-y-4">
+                <div id="globalBudgetError" class="hidden bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-sm p-3 rounded-lg border border-red-100 dark:border-red-800/50"></div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">งบประมาณรวมฝ่ายปีปัจจุบัน (บาท)</label>
+                    <input type="number" id="globalBudgetInput" min="0" step="1000" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none">
+                </div>
+                <p class="text-xs text-slate-500 dark:text-slate-400">
+                    บันทึกที่ Firestore: <code>settings/budget.totalBudget</code>
+                </p>
+                <div class="pt-2 flex justify-end gap-3">
+                    <button type="button" id="cancelGlobalBudgetBtn" class="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white transition-colors">ยกเลิก</button>
+                    <button type="button" id="saveGlobalBudgetBtn" class="px-5 py-2 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 dark:bg-sky-600 dark:hover:bg-sky-700 rounded-lg shadow-sm transition-colors flex items-center gap-2">
+                        <span>บันทึกงบรวม</span>
+                        <span id="saveGlobalBudgetSpinner" class="hidden inline-block animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    document.getElementById('closeGlobalBudgetModalBtn')?.addEventListener('click', closeGlobalBudgetModal);
+    document.getElementById('cancelGlobalBudgetBtn')?.addEventListener('click', closeGlobalBudgetModal);
+    document.getElementById('saveGlobalBudgetBtn')?.addEventListener('click', saveGlobalBudget);
+}
+
+function openGlobalBudgetModal() {
+    ensureGlobalBudgetModal();
+
+    const modal = document.getElementById('globalBudgetModal');
+    const content = document.getElementById('globalBudgetModalContent');
+    const input = document.getElementById('globalBudgetInput');
+    const error = document.getElementById('globalBudgetError');
+
+    if (input) input.value = Number(totalBudgetLimit || DEFAULT_TOTAL_BUDGET);
+    error?.classList.add('hidden');
+
+    modal.classList.remove('hidden');
+    setTimeout(() => {
+        modal.classList.remove('opacity-0');
+        content.classList.remove('scale-95');
+    }, 10);
+}
+
+function closeGlobalBudgetModal() {
+    const modal = document.getElementById('globalBudgetModal');
+    const content = document.getElementById('globalBudgetModalContent');
+    if (!modal || !content) return;
+
+    modal.classList.add('opacity-0');
+    content.classList.add('scale-95');
+    setTimeout(() => modal.classList.add('hidden'), 250);
+}
+
+async function saveGlobalBudget() {
+    if (!canEditBudget(currentUser)) {
+        showBudgetError('บัญชีนี้ไม่มีสิทธิ์แก้ไขงบประมาณรวม');
+        return;
+    }
+
+    const input = document.getElementById('globalBudgetInput');
+    const spinner = document.getElementById('saveGlobalBudgetSpinner');
+    const saveBtn = document.getElementById('saveGlobalBudgetBtn');
+    const value = Number(input?.value || 0);
+
+    if (!Number.isFinite(value) || value < 0) {
+        showBudgetError('กรุณาระบุงบประมาณรวมให้ถูกต้อง');
+        return;
+    }
+
+    try {
+        saveBtn.disabled = true;
+        spinner?.classList.remove('hidden');
+
+        await setDoc(SETTINGS_REF, {
+            totalBudget: value,
+            updatedBy: currentUserUid,
+            updatedByName: currentUser?.name || currentUser?.email || 'Unknown',
+            updatedAt: serverTimestamp()
+        }, { merge: true });
+
+        closeGlobalBudgetModal();
+    } catch (error) {
+        console.error('Save global budget error:', error);
+        showBudgetError('บันทึกงบประมาณรวมไม่สำเร็จ กรุณาตรวจสอบ Firestore Rules ของ settings/budget');
+    } finally {
+        saveBtn.disabled = false;
+        spinner?.classList.add('hidden');
+    }
+}
+
+function showBudgetError(message) {
+    const error = document.getElementById('globalBudgetError');
+    if (!error) return;
+    error.textContent = message;
+    error.classList.remove('hidden');
+}
+
+function updateBudgetOverviewText() {
+    const titleEl = findBudgetTitleElement();
+    if (titleEl) {
+        titleEl.id = 'globalBudgetTitle';
+        titleEl.textContent = `ภาพรวมงบประมาณฝ่ายปีปัจจุบัน (${formatNumber(totalBudgetLimit)} THB)`;
+    }
+
+    const spent = parseThaiNumber(document.getElementById('globalSpent')?.textContent || '0');
+    const remaining = totalBudgetLimit - spent;
+    const percent = totalBudgetLimit > 0 ? (spent / totalBudgetLimit) * 100 : 0;
+
+    setText('globalRemaining', formatNumber(remaining));
+    setText('budgetPercent', percent.toFixed(1));
+
+    const bar = document.getElementById('budgetProgressBar');
+    if (bar) bar.style.width = `${Math.min(percent, 100)}%`;
+}
+
+function setText(id, text) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+}
+
+function parseThaiNumber(text) {
+    return Number(String(text || '0').replace(/[^0-9.-]/g, '')) || 0;
+}
+
+function formatNumber(value) {
+    return new Intl.NumberFormat('th-TH').format(Number(value || 0));
+}
