@@ -3,7 +3,8 @@ import { db, auth } from './firebase-config.js';
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 import { collection, getDocs, doc, getDoc, addDoc, updateDoc, query, orderBy, Timestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-const TOTAL_BUDGET = 1500000;
+let totalBudgetLimit = 1500000;
+let lastApprovedBudgetTotal = 0;
 
 // Shared UI Logic
 const setupSharedUI = () => {
