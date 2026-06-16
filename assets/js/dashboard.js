@@ -1,7 +1,7 @@
 // assets/js/dashboard.js
-// Firebase-only Dashboard
-// ข้อมูลทั้งหมดอ่านจาก Firestore ไม่ฝังตัวเลข/โครงการไว้ในไฟล์ JS แล้ว
-// Version: firebase-only-realtime-dashboard-v1
+// Firebase-only Dashboard + Global Budget from Firestore settings/budget
+// แก้ปัญหา "ช่องงบประมาณรวมเป็น 0" โดยอ่านงบรวมจาก settings/budget.totalBudget
+// Version: dashboard-global-budget-v2
 
 import { auth, db } from './firebase-config.js';
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
@@ -9,19 +9,22 @@ import {
     collection,
     doc,
     getDoc,
-    onSnapshot,
-    query,
-    where
+    onSnapshot
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-console.log('dashboard.js loaded: firebase-only-realtime-dashboard-v1');
+console.log('dashboard.js loaded: dashboard-global-budget-v2');
+
+const DEFAULT_TOTAL_BUDGET = 1500000;
+const BUDGET_REF = doc(db, 'settings', 'budget');
 
 let budgetChart = null;
 let workloadChart = null;
 let projectsCache = [];
 let tasksCache = [];
+let globalBudget = DEFAULT_TOTAL_BUDGET;
 let unsubProjects = null;
 let unsubTasks = null;
+let unsubBudget = null;
 let mounted = false;
 
 document.addEventListener('DOMContentLoaded', initDashboardPage);
@@ -58,7 +61,6 @@ function waitForPageContent(callback) {
             return;
         }
 
-        // ถ้า header.js ไม่สร้าง pageContent ให้สร้างสำรองเอง
         if (attempts >= 20) {
             clearInterval(timer);
             const fallback = createFallbackPageContent();
@@ -107,6 +109,7 @@ function initAuthAndRealtimeData() {
     if (mockUserStr) {
         const mockUser = JSON.parse(mockUserStr);
         initUserHeader(mockUser, true);
+        listenGlobalBudget();
         listenProjects();
         listenTasks();
         return;
@@ -139,6 +142,7 @@ function initAuthAndRealtimeData() {
         }
 
         initUserHeader(appUser, false);
+        listenGlobalBudget();
         listenProjects();
         listenTasks();
     });
@@ -178,6 +182,25 @@ function initUserHeader(user, isMockUser) {
     }
 }
 
+function listenGlobalBudget() {
+    if (typeof unsubBudget === 'function') unsubBudget();
+
+    unsubBudget = onSnapshot(BUDGET_REF, (snap) => {
+        if (snap.exists()) {
+            const data = snap.data();
+            globalBudget = toNumber(data.totalBudget || DEFAULT_TOTAL_BUDGET);
+        } else {
+            globalBudget = DEFAULT_TOTAL_BUDGET;
+        }
+        renderDashboardFromFirebase();
+    }, (error) => {
+        console.error('Budget settings listener error:', error);
+        globalBudget = DEFAULT_TOTAL_BUDGET;
+        showFirebaseStatus('อ่านข้อมูลงบประมาณรวมจาก settings/budget ไม่สำเร็จ ใช้ค่าเริ่มต้น 1,500,000 บาท', 'info');
+        renderDashboardFromFirebase();
+    });
+}
+
 function listenProjects() {
     if (typeof unsubProjects === 'function') unsubProjects();
 
@@ -188,7 +211,7 @@ function listenProjects() {
         renderDashboardFromFirebase();
     }, (error) => {
         console.error('Projects listener error:', error);
-        showFirebaseStatus('อ่านข้อมูล projects จาก Firebase ไม่สำเร็จ กรุณาตรวจสอบ Firestore Rules', 'error');
+        showFirebaseStatus(`อ่านข้อมูล projects จาก Firebase ไม่สำเร็จ: ${error.code || error.message || error}`, 'error');
         projectsCache = [];
         renderDashboardFromFirebase();
     });
@@ -204,26 +227,28 @@ function listenTasks() {
         renderDashboardFromFirebase();
     }, (error) => {
         console.error('Tasks listener error:', error);
-        showFirebaseStatus('อ่านข้อมูล tasks จาก Firebase ไม่สำเร็จ กรุณาตรวจสอบ Firestore Rules', 'error');
+        // tasks ไม่จำเป็นต่อยอดงบรวม จึงไม่ให้ทับ status error ของ projects/settings
         tasksCache = [];
         renderDashboardFromFirebase();
     });
 }
 
 function normalizeProject(id, data) {
-    const total = toNumber(data.totalBudget ?? data.total ?? data.budget ?? 0);
-    const used = toNumber(data.usedBudget ?? data.used ?? data.spent ?? 0);
+    const total = toNumber(data.totalBudget ?? data.total ?? data.budgetAllocated ?? data.budget ?? 0);
+    const used = toNumber(data.usedBudget ?? data.used ?? data.budgetSpent ?? data.spent ?? 0);
 
     return {
         id,
         code: data.code || 'งา',
-        name: data.name || data.projectName || 'ไม่ระบุชื่อโครงการ',
-        owner: data.ownerName || data.owner || data.managerName || 'ไม่ระบุผู้รับผิดชอบ',
+        name: data.name || data.title || data.projectName || 'ไม่ระบุชื่อโครงการ',
+        owner: data.ownerName || data.creatorName || data.owner || data.managerName || 'ไม่ระบุผู้รับผิดชอบ',
         total,
         used,
         progress: toNumber(data.progress ?? 0),
         accent: data.accent || data.color || '#3b82f6',
-        status: data.status || 'active'
+        status: data.status || 'active',
+        requestedBudget: toNumber(data.requestedBudget ?? 0),
+        durationLabel: data.durationLabel || getProjectDurationText(data)
     };
 }
 
@@ -246,9 +271,16 @@ function renderDashboardFromFirebase() {
     const projects = projectsCache;
     const tasks = tasksCache;
 
-    const totalBudget = projects.reduce((sum, project) => sum + toNumber(project.total), 0);
-    const usedBudget = projects.reduce((sum, project) => sum + toNumber(project.used), 0);
-    const remainingBudget = Math.max(totalBudget - usedBudget, 0);
+    // งบประมาณรวมฝ่ายอ่านจาก settings/budget.totalBudget
+    const totalBudget = toNumber(globalBudget || DEFAULT_TOTAL_BUDGET);
+
+    // ใช้เฉพาะโครงการที่ approved เป็นงบที่จัดสรร/อนุมัติแล้ว
+    const approvedProjects = projects.filter(project => project.status === 'approved');
+    const approvedBudget = approvedProjects.reduce((sum, project) => sum + toNumber(project.total), 0);
+    const usedBudget = approvedProjects.reduce((sum, project) => sum + toNumber(project.used), 0);
+
+    // คงเหลือ = งบรวมฝ่าย - งบที่อนุมัติแล้วรวม
+    const remainingBudget = Math.max(totalBudget - approvedBudget, 0);
 
     const workloads = buildWorkloads(tasks);
     const urgentTasks = tasks.filter(task => task.urgent || task.tone === 'red' || task.tone === 'amber').slice(0, 10);
@@ -256,7 +288,7 @@ function renderDashboardFromFirebase() {
     renderDashboard({
         summary: {
             totalBudget,
-            usedBudget,
+            usedBudget: approvedBudget,
             remainingBudget
         },
         projects,
@@ -304,8 +336,8 @@ function renderDashboard(data) {
     setText('totalBudget', baht(total));
     setText('usedBudget', baht(used));
     setText('remainingBudget', baht(remaining));
-    setText('usedPercent', `${percent(used, total)}% ของงบประมาณจัดสรร`);
-    setText('remainingPercent', `${percent(remaining, total)}% ของงบประมาณจัดสรร`);
+    setText('usedPercent', `${percent(used, total)}% ของงบประมาณรวมฝ่าย`);
+    setText('remainingPercent', `${percent(remaining, total)}% ของงบประมาณรวมฝ่าย`);
 
     renderProjects(projects);
     renderUrgentTasks(urgentTasks);
@@ -313,7 +345,7 @@ function renderDashboard(data) {
     renderWorkloadChart(workloads);
 
     if (!projects.length && !tasksCache.length) {
-        showFirebaseStatus('ยังไม่มีข้อมูลใน Firebase: เพิ่มข้อมูลใน collection projects และ tasks แล้ว Dashboard จะอัปเดตอัตโนมัติ', 'info');
+        showFirebaseStatus('ยังไม่มีข้อมูลโครงการใน Firebase แต่ระบบอ่านงบประมาณรวมจาก settings/budget แล้ว', 'info');
     } else {
         hideFirebaseStatus();
     }
@@ -331,6 +363,7 @@ function renderProjects(projects) {
     list.innerHTML = projects.map(project => {
         const usedPercent = percent(project.used, project.total);
         const progress = toNumber(project.progress);
+        const statusText = project.status === 'pending' ? 'รออนุมัติ' : project.status === 'approved' ? 'อนุมัติแล้ว' : project.status === 'rejected' ? 'ไม่อนุมัติ' : project.status;
 
         return `
             <article class="rounded-2xl border border-slate-200/80 dark:border-slate-700/80 bg-white/60 dark:bg-slate-900/55 p-5">
@@ -340,6 +373,7 @@ function renderProjects(projects) {
                         <div class="min-w-0">
                             <h4 class="font-bold text-slate-900 dark:text-white truncate">${escapeHtml(project.name)}</h4>
                             <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">${escapeHtml(project.owner)}</p>
+                            <p class="text-xs text-slate-400 dark:text-slate-500 mt-1">สถานะ: ${escapeHtml(statusText)} • ระยะเวลา: ${escapeHtml(project.durationLabel || '-')}</p>
                         </div>
                     </div>
                     <div class="text-right shrink-0">
@@ -409,9 +443,10 @@ function renderBudgetChart(projects) {
     const canvas = document.getElementById('budgetChart');
     if (!canvas || typeof Chart === 'undefined') return;
 
-    const labels = projects.map(p => p.name);
-    const usedData = projects.map(p => toNumber(p.used));
-    const remainingData = projects.map(p => Math.max(toNumber(p.total) - toNumber(p.used), 0));
+    const approvedProjects = projects.filter(project => project.status === 'approved');
+    const labels = approvedProjects.map(p => p.name);
+    const usedData = approvedProjects.map(p => toNumber(p.used));
+    const remainingData = approvedProjects.map(p => Math.max(toNumber(p.total) - toNumber(p.used), 0));
 
     if (budgetChart) budgetChart.destroy();
 
@@ -420,11 +455,12 @@ function renderBudgetChart(projects) {
         data: {
             labels,
             datasets: [
-                { label: 'งบประมาณใช้ไป (บาท)', data: usedData, backgroundColor: '#3b6fc8', borderRadius: 3 },
-                { label: 'งบประมาณคงเหลือ (บาท)', data: remainingData, backgroundColor: '#15986e', borderRadius: 3 }
+                { label: 'งบที่อนุมัติแล้ว (บาท)', data: approvedProjects.map(p => toNumber(p.total)), backgroundColor: '#3b6fc8', borderRadius: 3 },
+                { label: 'งบใช้จริง (บาท)', data: usedData, backgroundColor: '#15986e', borderRadius: 3 },
+                { label: 'งบคงเหลือในโครงการ (บาท)', data: remainingData, backgroundColor: '#c8820f', borderRadius: 3 }
             ]
         },
-        options: chartBaseOptions(true)
+        options: chartBaseOptions(false)
     });
 }
 
@@ -470,8 +506,8 @@ function getFallbackDashboardHtml() {
         <section class="space-y-6">
             <div id="firebaseStatus" class="hidden rounded-2xl border px-4 py-3 text-sm"></div>
             <div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
-                <article class="dashboard-card metric-card rounded-2xl p-6" style="--accent:#2563eb"><p class="text-xs font-semibold text-slate-500 dark:text-slate-400">งบประมาณจัดสรรโครงการ</p><h3 id="totalBudget" class="text-3xl font-extrabold text-slate-900 dark:text-white mt-1">฿0</h3><p class="text-xs font-semibold text-blue-500 mt-1">รวมจาก Firebase collection projects</p></article>
-                <article class="dashboard-card metric-card rounded-2xl p-6" style="--accent:#f59e0b"><p class="text-xs font-semibold text-slate-500 dark:text-slate-400">งบประมาณใช้จริง</p><h3 id="usedBudget" class="text-3xl font-extrabold text-slate-900 dark:text-white mt-1">฿0</h3><p id="usedPercent" class="text-xs font-semibold text-amber-500 mt-1">0%</p></article>
+                <article class="dashboard-card metric-card rounded-2xl p-6" style="--accent:#2563eb"><p class="text-xs font-semibold text-slate-500 dark:text-slate-400">งบประมาณรวมฝ่าย</p><h3 id="totalBudget" class="text-3xl font-extrabold text-slate-900 dark:text-white mt-1">฿0</h3><p class="text-xs font-semibold text-blue-500 mt-1">อ่านจาก settings/budget.totalBudget</p></article>
+                <article class="dashboard-card metric-card rounded-2xl p-6" style="--accent:#f59e0b"><p class="text-xs font-semibold text-slate-500 dark:text-slate-400">งบที่อนุมัติแล้ว</p><h3 id="usedBudget" class="text-3xl font-extrabold text-slate-900 dark:text-white mt-1">฿0</h3><p id="usedPercent" class="text-xs font-semibold text-amber-500 mt-1">0%</p></article>
                 <article class="dashboard-card metric-card rounded-2xl p-6" style="--accent:#10b981"><p class="text-xs font-semibold text-slate-500 dark:text-slate-400">งบประมาณรวมคงเหลือ</p><h3 id="remainingBudget" class="text-3xl font-extrabold text-slate-900 dark:text-white mt-1">฿0</h3><p id="remainingPercent" class="text-xs font-semibold text-emerald-500 mt-1">0%</p></article>
             </div>
             <div class="grid grid-cols-1 2xl:grid-cols-7 gap-5">
@@ -503,6 +539,18 @@ function showFirebaseStatus(message, type = 'info') {
 function hideFirebaseStatus() {
     const el = document.getElementById('firebaseStatus');
     if (el) el.classList.add('hidden');
+}
+
+function getProjectDurationText(data) {
+    if (data.noDeadline) return 'ไม่มีกำหนดเวลา';
+    if (data.startDate && data.endDate) return `${formatThaiDate(data.startDate)} - ${formatThaiDate(data.endDate)}`;
+    return '-';
+}
+
+function formatThaiDate(dateString) {
+    const date = new Date(`${dateString}T00:00:00`);
+    if (Number.isNaN(date.getTime())) return dateString || '-';
+    return date.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 function setText(id, text) {
