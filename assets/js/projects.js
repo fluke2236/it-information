@@ -1,7 +1,7 @@
 // assets/js/projects.js
 // Project workflow: Draft -> Submit -> Manager Approve / Reject / Request Edit
 // Auto-clean rejected projects older than 30 days when this page loads/listens
-// Version: projects-draft-review-autoclean-v7
+// Version: projects-draft-review-autoclean-v7-fixed
 
 import { db, auth } from './firebase-config.js';
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
@@ -17,7 +17,7 @@ import {
   serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-console.log('projects.js loaded: projects-draft-review-autoclean-v7');
+console.log('projects.js loaded: projects-draft-review-autoclean-v7-fixed');
 
 const DEFAULT_TOTAL_BUDGET = 1500000;
 const PROJECTS_COLLECTION = 'projects';
@@ -238,7 +238,14 @@ function ensureProjectFormButtons() {
   const span = saveBtn.querySelector('span');
   if (span) span.textContent = 'บันทึกร่าง';
 
-  if (document.getElementById('submitProjectNowBtn')) return;
+  let existingSubmitBtn = document.getElementById('submitProjectNowBtn');
+  if (existingSubmitBtn) {
+    if (!existingSubmitBtn.dataset.bound) {
+      existingSubmitBtn.dataset.bound = '1';
+      existingSubmitBtn.addEventListener('click', () => submitProjectForm('pending'));
+    }
+    return;
+  }
 
   const submitBtn = document.createElement('button');
   submitBtn.type = 'button';
@@ -580,6 +587,7 @@ function setupActionModal() {
   document.getElementById('closeActionModal')?.addEventListener('click', closeActionModal);
   document.getElementById('btnApproveProj')?.addEventListener('click', () => approveProject(closeActionModal));
   document.getElementById('btnRejectProj')?.addEventListener('click', () => rejectProject(closeActionModal));
+  document.getElementById('btnRequestEditProj')?.addEventListener('click', () => requestEditProject(closeActionModal));
 }
 
 function closeActionModal() {
