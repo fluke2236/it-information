@@ -15,7 +15,7 @@ let workloadChart = null;
 
 const defaultDashboardData = {
     summary: {
-        totalBudget: 1020000,
+        totalBudget: 1000000,
         usedBudget: 850000,
         remainingBudget: 170000
     },
