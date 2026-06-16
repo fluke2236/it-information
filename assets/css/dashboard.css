@@ -1,0 +1,66 @@
+/* assets/css/dashboard.css */
+/* Dashboard Budget & Project UI
+   ไฟล์นี้เก็บเฉพาะ style ของหน้า dashboard.html
+   style กลางยังอยู่ที่ assets/css/style.css และ style header อยู่ที่ assets/css/header.css
+*/
+
+body {
+    font-family: 'Prompt', sans-serif;
+}
+
+.dashboard-card {
+    background: linear-gradient(180deg, rgba(255, 255, 255, .92), rgba(248, 250, 252, .88));
+    border: 1px solid rgba(148, 163, 184, .35);
+    box-shadow: 0 14px 40px rgba(15, 23, 42, .08);
+}
+
+.dark .dashboard-card {
+    background: linear-gradient(180deg, rgba(17, 24, 39, .94), rgba(15, 23, 42, .96));
+    border-color: rgba(71, 85, 105, .55);
+    box-shadow: 0 20px 48px rgba(0, 0, 0, .28);
+}
+
+.metric-card {
+    position: relative;
+    overflow: hidden;
+}
+
+.metric-card::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 5px;
+    background: var(--accent, #3b82f6);
+}
+
+.soft-scroll::-webkit-scrollbar {
+    width: 8px;
+}
+
+.soft-scroll::-webkit-scrollbar-thumb {
+    background: rgba(100, 116, 139, .5);
+    border-radius: 999px;
+}
+
+.progress-track {
+    height: 9px;
+    border-radius: 999px;
+    background: rgba(100, 116, 139, .16);
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    border-radius: 999px;
+    transition: width .5s ease;
+}
+
+.chart-box {
+    height: 315px;
+}
+
+@media (max-width: 768px) {
+    .chart-box {
+        height: 260px;
+    }
+}
