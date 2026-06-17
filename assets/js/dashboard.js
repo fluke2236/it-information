@@ -1,7 +1,7 @@
 // assets/js/dashboard.js
 // Firebase-only Dashboard + Global Budget from Firestore settings/budget
 // แก้ปัญหา "ช่องงบประมาณรวมเป็น 0" โดยอ่านงบรวมจาก settings/budget.totalBudget
-// Version: dashboard-metric-soft-colors-v3
+// Version: dashboard-metric-soft-colors-v4
 
 import { auth, db } from './firebase-config.js';
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
@@ -12,7 +12,7 @@ import {
     onSnapshot
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-console.log('dashboard.js loaded: dashboard-metric-soft-colors-v3');
+console.log('dashboard.js loaded: dashboard-metric-soft-colors-v4');
 
 const DEFAULT_TOTAL_BUDGET = 1500000;
 const BUDGET_REF = doc(db, 'settings', 'budget');
@@ -101,9 +101,7 @@ function mountDashboard(pageContent) {
     }
 
     mounted = true;
-    applyMetricCardThemes();
 }
-
 
 function initAuthAndRealtimeData() {
     const mockUserStr = localStorage.getItem('mockUser');
@@ -345,7 +343,6 @@ function renderDashboard(data) {
     renderUrgentTasks(urgentTasks);
     renderBudgetChart(projects);
     renderWorkloadChart(workloads);
-    applyMetricCardThemes();
 
     if (!projects.length && !tasksCache.length) {
         showFirebaseStatus('ยังไม่มีข้อมูลโครงการใน Firebase แต่ระบบอ่านงบประมาณรวมจาก settings/budget แล้ว', 'info');
@@ -504,116 +501,100 @@ function chartBaseOptions(stacked) {
     };
 }
 
-
-function applyMetricCardThemes() {
-    injectMetricCardThemeStyle();
-
-    const configs = [
-        {
-            id: 'totalBudget',
-            key: 'total',
-            iconBg: 'rgba(37, 99, 235, 0.14)',
-            iconColor: '#2563eb'
-        },
-        {
-            id: 'usedBudget',
-            key: 'used',
-            iconBg: 'rgba(245, 158, 11, 0.16)',
-            iconColor: '#f59e0b'
-        },
-        {
-            id: 'remainingBudget',
-            key: 'remaining',
-            iconBg: 'rgba(16, 185, 129, 0.16)',
-            iconColor: '#10b981'
-        }
-    ];
-
-    configs.forEach(config => {
-        const valueEl = document.getElementById(config.id);
-        const card = valueEl?.closest('article');
-        if (!card) return;
-
-        card.dataset.metricCard = config.key;
-        card.classList.add('metric-soft-card');
-
-        const iconBox = card.querySelector('.w-12.h-12');
-        if (iconBox) {
-            iconBox.style.backgroundColor = config.iconBg;
-            iconBox.style.color = config.iconColor;
-        }
-    });
-}
-
 function injectMetricCardThemeStyle() {
     if (document.getElementById('metricSoftCardThemeStyle')) return;
 
     const style = document.createElement('style');
     style.id = 'metricSoftCardThemeStyle';
     style.textContent = `
-        .metric-soft-card {
-            position: relative;
-            overflow: hidden;
-            border-width: 1px;
-            backdrop-filter: blur(14px);
-            transition: background .25s ease, border-color .25s ease, box-shadow .25s ease, transform .25s ease;
-        }
-        .metric-soft-card::before {
-            content: "";
-            position: absolute;
-            inset: 0;
-            pointer-events: none;
-            opacity: .9;
-        }
-        .metric-soft-card > * {
-            position: relative;
-            z-index: 1;
-        }
-        .metric-soft-card:hover {
-            transform: translateY(-1px);
+        /* Force override dashboard-card dark/black background */
+        article.metric-soft-card,
+        .dashboard-card.metric-soft-card,
+        .metric-card.metric-soft-card {
+            position: relative !important;
+            overflow: hidden !important;
+            border-width: 1px !important;
+            backdrop-filter: blur(14px) !important;
+            transition: background .25s ease, border-color .25s ease, box-shadow .25s ease, transform .25s ease !important;
+            background-color: transparent !important;
+            background-blend-mode: normal !important;
         }
 
-        [data-metric-card="total"] {
-            background: linear-gradient(135deg, rgba(37, 99, 235, .13), rgba(37, 99, 235, .045) 48%, rgba(255,255,255,.86));
-            border-color: rgba(37, 99, 235, .28) !important;
-            box-shadow: 0 16px 40px rgba(37, 99, 235, .10);
-        }
-        [data-metric-card="total"]::before {
-            background: radial-gradient(circle at 12% 18%, rgba(37, 99, 235, .14), transparent 34%);
-        }
-
-        [data-metric-card="used"] {
-            background: linear-gradient(135deg, rgba(245, 158, 11, .14), rgba(245, 158, 11, .05) 48%, rgba(255,255,255,.86));
-            border-color: rgba(245, 158, 11, .30) !important;
-            box-shadow: 0 16px 40px rgba(245, 158, 11, .10);
-        }
-        [data-metric-card="used"]::before {
-            background: radial-gradient(circle at 12% 18%, rgba(245, 158, 11, .16), transparent 34%);
+        article.metric-soft-card::before,
+        .dashboard-card.metric-soft-card::before,
+        .metric-card.metric-soft-card::before {
+            content: "" !important;
+            position: absolute !important;
+            inset: 0 !important;
+            pointer-events: none !important;
+            opacity: 1 !important;
+            z-index: 0 !important;
         }
 
-        [data-metric-card="remaining"] {
-            background: linear-gradient(135deg, rgba(16, 185, 129, .14), rgba(16, 185, 129, .05) 48%, rgba(255,255,255,.86));
-            border-color: rgba(16, 185, 129, .30) !important;
-            box-shadow: 0 16px 40px rgba(16, 185, 129, .10);
-        }
-        [data-metric-card="remaining"]::before {
-            background: radial-gradient(circle at 12% 18%, rgba(16, 185, 129, .16), transparent 34%);
+        article.metric-soft-card > *,
+        .dashboard-card.metric-soft-card > *,
+        .metric-card.metric-soft-card > * {
+            position: relative !important;
+            z-index: 1 !important;
         }
 
-        .dark [data-metric-card="total"] {
-            background: linear-gradient(135deg, rgba(37, 99, 235, .22), rgba(37, 99, 235, .08) 52%, rgba(15, 23, 42, .88));
-            border-color: rgba(96, 165, 250, .34) !important;
-            box-shadow: 0 18px 46px rgba(37, 99, 235, .17);
+        article.metric-soft-card:hover,
+        .dashboard-card.metric-soft-card:hover,
+        .metric-card.metric-soft-card:hover {
+            transform: translateY(-1px) !important;
         }
-        .dark [data-metric-card="used"] {
-            background: linear-gradient(135deg, rgba(245, 158, 11, .23), rgba(245, 158, 11, .085) 52%, rgba(15, 23, 42, .88));
-            border-color: rgba(251, 191, 36, .36) !important;
-            box-shadow: 0 18px 46px rgba(245, 158, 11, .16);
+
+        /* LIGHT MODE */
+        html:not(.dark) article.metric-soft-card[data-metric-card="total"],
+        html:not(.dark) .dashboard-card.metric-soft-card[data-metric-card="total"] {
+            background: linear-gradient(135deg, rgba(37, 99, 235, .20) 0%, rgba(37, 99, 235, .105) 42%, rgba(37, 99, 235, .045) 100%) !important;
+            border-color: rgba(37, 99, 235, .42) !important;
+            box-shadow: inset 4px 0 0 rgba(37, 99, 235, .95), 0 18px 44px rgba(37, 99, 235, .13) !important;
         }
-        .dark [data-metric-card="remaining"] {
-            background: linear-gradient(135deg, rgba(16, 185, 129, .23), rgba(16, 185, 129, .085) 52%, rgba(15, 23, 42, .88));
-            border-color: rgba(52, 211, 153, .36) !important;
-            box-shadow: 0 18px 46px rgba(16, 185, 129, .16);
+        html:not(.dark) article.metric-soft-card[data-metric-card="used"],
+        html:not(.dark) .dashboard-card.metric-soft-card[data-metric-card="used"] {
+            background: linear-gradient(135deg, rgba(245, 158, 11, .22) 0%, rgba(245, 158, 11, .115) 42%, rgba(245, 158, 11, .048) 100%) !important;
+            border-color: rgba(245, 158, 11, .46) !important;
+            box-shadow: inset 4px 0 0 rgba(245, 158, 11, .95), 0 18px 44px rgba(245, 158, 11, .13) !important;
+        }
+        html:not(.dark) article.metric-soft-card[data-metric-card="remaining"],
+        html:not(.dark) .dashboard-card.metric-soft-card[data-metric-card="remaining"] {
+            background: linear-gradient(135deg, rgba(16, 185, 129, .22) 0%, rgba(16, 185, 129, .115) 42%, rgba(16, 185, 129, .048) 100%) !important;
+            border-color: rgba(16, 185, 129, .46) !important;
+            box-shadow: inset 4px 0 0 rgba(16, 185, 129, .95), 0 18px 44px rgba(16, 185, 129, .13) !important;
+        }
+
+        /* DARK MODE - stronger tint so it won't look black */
+        html.dark article.metric-soft-card[data-metric-card="total"],
+        html.dark .dashboard-card.metric-soft-card[data-metric-card="total"] {
+            background: linear-gradient(135deg, rgba(37, 99, 235, .34) 0%, rgba(37, 99, 235, .18) 42%, rgba(37, 99, 235, .075) 100%) !important;
+            border-color: rgba(96, 165, 250, .55) !important;
+            box-shadow: inset 4px 0 0 rgba(37, 99, 235, 1), 0 18px 46px rgba(37, 99, 235, .24) !important;
+        }
+        html.dark article.metric-soft-card[data-metric-card="used"],
+        html.dark .dashboard-card.metric-soft-card[data-metric-card="used"] {
+            background: linear-gradient(135deg, rgba(245, 158, 11, .36) 0%, rgba(245, 158, 11, .19) 42%, rgba(245, 158, 11, .08) 100%) !important;
+            border-color: rgba(251, 191, 36, .58) !important;
+            box-shadow: inset 4px 0 0 rgba(245, 158, 11, 1), 0 18px 46px rgba(245, 158, 11, .23) !important;
+        }
+        html.dark article.metric-soft-card[data-metric-card="remaining"],
+        html.dark .dashboard-card.metric-soft-card[data-metric-card="remaining"] {
+            background: linear-gradient(135deg, rgba(16, 185, 129, .36) 0%, rgba(16, 185, 129, .19) 42%, rgba(16, 185, 129, .08) 100%) !important;
+            border-color: rgba(52, 211, 153, .58) !important;
+            box-shadow: inset 4px 0 0 rgba(16, 185, 129, 1), 0 18px 46px rgba(16, 185, 129, .23) !important;
+        }
+
+        html.dark article.metric-soft-card[data-metric-card="total"]::before,
+        html.dark .dashboard-card.metric-soft-card[data-metric-card="total"]::before {
+            background: radial-gradient(circle at 14% 20%, rgba(96, 165, 250, .22), transparent 38%) !important;
+        }
+        html.dark article.metric-soft-card[data-metric-card="used"]::before,
+        html.dark .dashboard-card.metric-soft-card[data-metric-card="used"]::before {
+            background: radial-gradient(circle at 14% 20%, rgba(251, 191, 36, .24), transparent 38%) !important;
+        }
+        html.dark article.metric-soft-card[data-metric-card="remaining"]::before,
+        html.dark .dashboard-card.metric-soft-card[data-metric-card="remaining"]::before {
+            background: radial-gradient(circle at 14% 20%, rgba(52, 211, 153, .24), transparent 38%) !important;
         }
     `;
     document.head.appendChild(style);
