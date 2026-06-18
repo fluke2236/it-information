@@ -1,6 +1,6 @@
 // assets/js/admin.js
 // หน้า: จัดการผู้ใช้งานและสิทธิ์
-// เวอร์ชันแก้ไข: ไม่เด้งกลับหน้า login อัตโนมัติเมื่อ Auth ยังคืนค่าไม่ทัน/สถานะหลุดชั่วคราว
+// เวอร์ชันแก้ไข: เพิ่มหัวข้อส่วนงาน งานเทคนิค / งานสารสนเทศ / งานสื่อสารองค์กร
 
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
 import {
@@ -37,6 +37,12 @@ const ROLE_LABELS = {
   admin: "ผู้ดูแลระบบ"
 };
 
+const SECTION_LABELS = {
+  technical: "งานเทคนิค",
+  information: "งานสารสนเทศ",
+  corporate_communication: "งานสื่อสารองค์กร"
+};
+
 const els = {
   appBody: document.getElementById("appBody"),
   adminMenu: document.getElementById("adminMenu"),
@@ -60,6 +66,7 @@ const els = {
   emailHelpText: document.getElementById("emailHelpText"),
   userNameInput: document.getElementById("userNameInput"),
   roleSelect: document.getElementById("userRoleSelect"),
+  sectionSelect: document.getElementById("userSectionSelect"),
   annualLeave: document.getElementById("userAnnualLeave"),
   sickLeave: document.getElementById("userSickLeave"),
   overrideApproveLeave: document.getElementById("overrideApproveLeave"),
@@ -151,10 +158,21 @@ function roleBadge(role) {
   return `<span class="inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${color}">${ROLE_LABELS[role] || role || "-"}</span>`;
 }
 
+
+function sectionBadge(section) {
+  const color = {
+    technical: "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
+    information: "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
+    corporate_communication: "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+  }[section] || "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300";
+
+  return `<span class="inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${color}">${SECTION_LABELS[section] || section || "-"}</span>`;
+}
+
 function renderLoading(message = "กำลังดึงข้อมูล...") {
   els.tableBody.innerHTML = `
     <tr>
-      <td colspan="5" class="py-10 text-center text-slate-400">
+      <td colspan="6" class="py-10 text-center text-slate-400">
         <div class="inline-block animate-spin rounded-full h-6 w-6 border-2 border-slate-300 dark:border-slate-600 border-t-sky-500 mb-2"></div>
         <p>${message}</p>
       </td>
@@ -164,7 +182,7 @@ function renderLoading(message = "กำลังดึงข้อมูล..."
 function renderEmpty(message = "ยังไม่มีข้อมูลผู้ใช้งาน") {
   els.tableBody.innerHTML = `
     <tr>
-      <td colspan="5" class="py-10 text-center text-slate-400">
+      <td colspan="6" class="py-10 text-center text-slate-400">
         <i class="ph ph-users-three text-3xl block mb-2"></i>
         ${message}
       </td>
@@ -180,7 +198,7 @@ function renderLoginRequired() {
 
   els.tableBody.innerHTML = `
     <tr>
-      <td colspan="5" class="py-12 px-4 text-center">
+      <td colspan="6" class="py-12 px-4 text-center">
         <div class="max-w-md mx-auto rounded-2xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/30 p-6">
           <i class="ph ph-warning-circle text-4xl text-amber-600 dark:text-amber-300 block mb-3"></i>
           <div class="text-base font-bold text-amber-800 dark:text-amber-200 mb-2">ยังไม่พบสถานะการเข้าสู่ระบบ</div>
@@ -203,7 +221,7 @@ function renderUsers(users = usersCache) {
   const keyword = els.searchInput?.value?.trim().toLowerCase() || "";
   const filtered = users.filter((u) => {
     if (!keyword) return true;
-    return [u.name, u.email, u.role].some((v) => String(v || "").toLowerCase().includes(keyword));
+    return [u.name, u.email, u.role, u.section, SECTION_LABELS[u.section]].some((v) => String(v || "").toLowerCase().includes(keyword));
   });
 
   if (!filtered.length) {
@@ -224,6 +242,7 @@ function renderUsers(users = usersCache) {
           <div class="text-xs text-slate-500 mt-0.5">${escapeHtml(safeText(u.email))}</div>
         </td>
         <td class="py-4 px-4">${roleBadge(u.role)}</td>
+        <td class="py-4 px-4">${sectionBadge(u.section)}</td>
         <td class="py-4 px-4 text-center">
           <span class="font-medium">${annual}</span><span class="text-slate-400"> / </span><span class="font-medium">${sick}</span>
         </td>
@@ -283,6 +302,7 @@ function openModal(mode = "add", user = null) {
   els.sickLeave.value = 30;
   els.overrideApproveLeave.value = "inherit";
   els.overrideApproveProject.value = "inherit";
+  if (els.sectionSelect) els.sectionSelect.value = "technical";
 
   if (mode === "edit" && user) {
     els.modalTitle.textContent = "แก้ไขข้อมูลผู้ใช้งาน";
@@ -292,6 +312,7 @@ function openModal(mode = "add", user = null) {
     els.emailHelpText.textContent = "ไม่สามารถแก้ไขอีเมลจากหน้านี้ได้";
     els.userNameInput.value = user.name || "";
     els.roleSelect.value = user.role || "staff";
+    if (els.sectionSelect) els.sectionSelect.value = user.section || "technical";
     els.annualLeave.value = user.leaveQuota?.annual ?? user.annualLeave ?? 10;
     els.sickLeave.value = user.leaveQuota?.sick ?? user.sickLeave ?? 30;
     els.overrideApproveLeave.value = user.permissions?.approveLeave ?? "inherit";
@@ -320,6 +341,7 @@ function collectFormData() {
     email: els.userEmail.value.trim().toLowerCase(),
     name: els.userNameInput.value.trim(),
     role: els.roleSelect.value,
+    section: els.sectionSelect?.value || "technical",
     leaveQuota: {
       annual: Number(els.annualLeave.value || 0),
       sick: Number(els.sickLeave.value || 0)
@@ -335,6 +357,7 @@ function validateUserData(data) {
   if (!data.email) return "กรุณากรอกอีเมล";
   if (!data.name) return "กรุณากรอกชื่อ-นามสกุล";
   if (!data.role) return "กรุณาเลือกบทบาท";
+  if (!data.section) return "กรุณาเลือกส่วนงาน";
   if (data.leaveQuota.annual < 0 || data.leaveQuota.sick < 0) return "โควตาวันลาต้องไม่ติดลบ";
   return "";
 }
@@ -365,6 +388,7 @@ async function handleSaveUser(event) {
       await updateDoc(doc(db, USERS_COLLECTION, id), {
         name: data.name,
         role: data.role,
+        section: data.section,
         leaveQuota: data.leaveQuota,
         permissions: data.permissions,
         updatedAt: serverTimestamp(),
@@ -377,6 +401,7 @@ async function handleSaveUser(event) {
         email: data.email,
         name: data.name,
         role: data.role,
+        section: data.section,
         leaveQuota: data.leaveQuota,
         permissions: data.permissions,
         status: "active",
